@@ -55,6 +55,7 @@ def get_weather_morning(place):
     # 07:00 → 06:50 → 06:40 → … → 05:00
     times = ["0700","0650","0640","0630","0620","0610","0600","0550","0540","0530","0520","0510","0500"]
 
+    # 朝データを順に探す
     for t in times:
         url = f"https://www.jma.go.jp/bosai/amedas/data/{today}/{code}/{t}.json"
         try:
@@ -64,10 +65,15 @@ def get_weather_morning(place):
         except:
             continue
 
-    # 最後の手段：最新データ
+    # fallback：最新データを正しい形式で取得
     try:
         latest = requests.get("https://www.jma.go.jp/bosai/amedas/data/latest_time.txt").text.strip()
-        url = f"https://www.jma.go.jp/bosai/amedas/data/{latest}/{code}.json"
+
+        # latest は "202403180650" のような形式
+        latest_date = latest[:8]   # 20240318
+        latest_time = latest[8:]   # 0650
+
+        url = f"https://www.jma.go.jp/bosai/amedas/data/{latest_date}/{code}/{latest_time}.json"
         data = requests.get(url, timeout=5).json()
         info = data[0]
         return info["wind_direction"]["value"], info["wind"]["value"]
