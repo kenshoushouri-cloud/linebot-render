@@ -49,33 +49,33 @@ BOAT_LATLON = {
 
 # ホームストレッチの向き（度数：0=北,90=東,180=南,270=西）
 COURSE_HEADING = {
-    "桐生": 180,   # 南向き
-    "戸田": 0,     # 北向き
-    "江戸川": 180, # 南向き
-    "平和島": 0,   # 北向き
-    "多摩川": 0,   # 北向き
-    "浜名湖": 180, # 南向き
-    "蒲郡": 180,   # 南向き
-    "常滑": 0,     # 北向き
-    "津": 0,       # 北向き
-    "三国": 180,   # 南向き
-    "びわこ": 0,   # 北向き
-    "住之江": 45,  # 北東向き（概ね）
-    "尼崎": 0,     # 北向き
-    "鳴門": 180,   # 南向き
-    "丸亀": 180,   # 南向き
-    "児島": 0,     # 北向き
-    "宮島": 180,   # 南向き
+    "桐生": 180,
+    "戸田": 0,
+    "江戸川": 180,
+    "平和島": 0,
+    "多摩川": 0,
+    "浜名湖": 180,
+    "蒲郡": 180,
+    "常滑": 0,
+    "津": 0,
+    "三国": 180,
+    "びわこ": 0,
+    "住之江": 45,   # 北東向き（概ね）
+    "尼崎": 0,
+    "鳴門": 180,
+    "丸亀": 180,
+    "児島": 0,
+    "宮島": 180,
     "徳山": 225,   # 南西向き
-    "下関": 0,     # 北向き
-    "若松": 180,   # 南向き
-    "芦屋": 0,     # 北向き
-    "福岡": 180,   # 南向き
-    "唐津": 0,     # 北向き
-    "大村": 180,   # 南向き
+    "下関": 0,
+    "若松": 180,
+    "芦屋": 0,
+    "福岡": 180,
+    "唐津": 0,
+    "大村": 180,
 }
 
-# 競艇場データ（Cプラン用の例）
+# 競艇場データ（例：丸亀のみ）
 COURSE_DATA = {
     "丸亀": {
         "1コース1着率": 55,
@@ -94,43 +94,21 @@ COURSE_DATA = {
 RACER_DATA = {}
 MOTOR_DATA = {}
 
-# 角度差を -180〜180 に正規化
-def normalize_angle_diff(a, b):
-    diff = (a - b + 180) % 360 - 180
-    return diff
+# ===== 気象キャッシュ（B案：7時以降の最初の予想時に全場まとめて取得） =====
+DAILY_WEATHER = {}          # { "丸亀": {"deg": 180, "speed": 3.5, "desc": "晴れ"} }
+LAST_WEATHER_DAY = None     # 「気象の日付」（7時またぎ対応）
 
-# 風向（度数）とコース向きから「追い風/向かい風/右横風/左横風」を判定（±30°厳密）
-def classify_relative_wind(place, wind_deg):
-    if wind_deg is None:
-        return "不明"
-
-    heading = COURSE_HEADING.get(place)
-    if heading is None:
-        return "不明"
-
-    # 追い風判定
-    diff_tail = normalize_angle_diff(wind_deg, heading)
-    # 向かい風判定（コース向き+180°）
-    opposite = (heading + 180) % 360
-    diff_head = normalize_angle_diff(wind_deg, opposite)
-
-    if abs(diff_tail) <= 30:
-        return "追い風"
-    if abs(diff_head) <= 30:
-        return "向かい風"
-
-    # 横風：右か左か
-    # 右横風：風がコース向きから見て右側（時計回り）に近い
-    # 左横風：風がコース向きから見て左側（反時計回り）に近い
-    # heading から見た風向の相対角
-    rel = normalize_angle_diff(wind_deg, heading)
-    if 0 < rel < 180:
-        return "右横風"
+def _weather_day(now: datetime.datetime):
+    """7時を境に『気象の日付』を決める。
+       7時前 → 前日扱い / 7時以降 → 当日扱い
+    """
+    if now.hour >= 7:
+        return now.date()
     else:
-        return "左横風"
+        return (now.date() - datetime.timedelta(days=1))
 
-# OpenWeatherMap から気象取得（※無料枠の都合で「現在の値」を使用）
-def get_weather(place):
+def fetch_weather(place):
+    """単一場の現在気象を OpenWeatherMap から取得"""
     info = BOAT_LATLON.get(place)
     if info is None or not OWM_API_KEY:
         return None, None, None
@@ -160,7 +138,62 @@ def get_weather(place):
     except:
         return None, None, None
 
-# モックデータ（後で実データに置換）
+def update_all_weather_if_needed():
+    """7時以降の最初の予想時に、全場の気象をまとめて取得してキャッシュ"""
+    global DAILY_WEATHER, LAST_WEATHER_DAY
+
+    now = datetime.datetime.now()
+    today_weather_day = _weather_day(now)
+
+    # 初回 or 気象日が変わったら全場更新
+    if LAST_WEATHER_DAY != today_weather_day and now.hour >= 7:
+        DAILY_WEATHER = {}
+        for place in BOAT_LATLON.keys():
+            deg, speed, desc = fetch_weather(place)
+            DAILY_WEATHER[place] = {
+                "deg": deg,
+                "speed": speed,
+                "desc": desc
+            }
+        LAST_WEATHER_DAY = today_weather_day
+
+def get_weather(place):
+    """キャッシュされた気象を返す（必要なら全場更新）"""
+    update_all_weather_if_needed()
+    w = DAILY_WEATHER.get(place)
+    if not w:
+        return None, None, None
+    return w["deg"], w["speed"], w["desc"]
+
+# ===== ここから風向判定・スコア計算など =====
+
+def normalize_angle_diff(a, b):
+    diff = (a - b + 180) % 360 - 180
+    return diff
+
+def classify_relative_wind(place, wind_deg):
+    if wind_deg is None:
+        return "不明"
+
+    heading = COURSE_HEADING.get(place)
+    if heading is None:
+        return "不明"
+
+    diff_tail = normalize_angle_diff(wind_deg, heading)
+    opposite = (heading + 180) % 360
+    diff_head = normalize_angle_diff(wind_deg, opposite)
+
+    if abs(diff_tail) <= 30:
+        return "追い風"
+    if abs(diff_head) <= 30:
+        return "向かい風"
+
+    rel = normalize_angle_diff(wind_deg, heading)
+    if 0 < rel < 180:
+        return "右横風"
+    else:
+        return "左横風"
+
 def get_mock_race_data():
     data = []
     for i in range(1, 7):
@@ -174,7 +207,6 @@ def get_mock_race_data():
         })
     return data
 
-# スコア計算
 def calculate_score(racer, place, wind_type, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
@@ -184,7 +216,6 @@ def calculate_score(racer, place, wind_type, wind_speed):
         (0.20 - racer["ST"]) * 100
     )
 
-    # 風の影響（種類＋風速）
     if wind_type == "追い風":
         score += (wind_speed or 0) * 1.5
     elif wind_type == "向かい風":
@@ -192,7 +223,6 @@ def calculate_score(racer, place, wind_type, wind_speed):
     elif wind_type in ["右横風", "左横風"]:
         score -= (wind_speed or 0) * 0.5
 
-    # 競艇場補正
     course = COURSE_DATA.get(place)
     if course:
         lane = racer["艇番"]
@@ -210,7 +240,6 @@ def calculate_score(racer, place, wind_type, wind_speed):
 
     return score
 
-# メイン予想
 def get_prediction(race_name):
     place = race_name[:2]
     today = datetime.datetime.now().strftime("%Y/%m/%d")
@@ -235,7 +264,7 @@ def get_prediction(race_name):
 📅 {today}
 🏁【{race_name}】
 
-【気象（OpenWeather 現在値）】
+【気象（OpenWeather 現在値・1日固定）】
 天気：{weather_display}
 風向：{wind_type}（方位：{wind_deg_display}°）
 風速：{wind_speed_display}m/s
@@ -260,7 +289,6 @@ def get_prediction(race_name):
 
     return text
 
-# 対応する競艇場一覧
 BOAT_RACES = list(BOAT_LATLON.keys())
 
 
@@ -273,29 +301,18 @@ def handle_message(event):
             predictions = []
             for r in range(1, 13):
                 predictions.append(get_prediction(f"{place}{r}R"))
-            line_bot_api.reply_message(event.reply_token, TextSendMessage("\n\n".join(predictions)))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage("\n\n".join(predictions))
+            )
             return
 
     for place in BOAT_RACES:
         if place in user_text and "R" in user_text:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(get_prediction(user_text)))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(get_prediction(user_text))
+            )
             return
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(user_text))
-
-
-@app.route("/callback", methods=['POST'])
-def callback():
-    signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
-
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-
-    return 'OK'
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
