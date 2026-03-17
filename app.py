@@ -16,16 +16,66 @@ import requests
 import datetime
 import random
 
-# AMeDAS地点コード
-AMEDAS_CODE = {
-    "桐生": "42111", "戸田": "43372", "江戸川": "44132", "平和島": "44132", "多摩川": "44132",
-    "浜名湖": "50331", "蒲郡": "51106", "常滑": "53133", "津": "53141", "三国": "54012",
-    "びわこ": "60216", "住之江": "62078", "尼崎": "62078", "鳴門": "71106", "丸亀": "72086",
-    "児島": "71351", "宮島": "74151", "徳山": "74182", "下関": "81236", "若松": "82182",
-    "芦屋": "82182", "福岡": "82131", "唐津": "82442", "大村": "84431"
+# ===== ここに OpenWeatherMap の API キーを貼る =====
+OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
+
+# 競艇場ごとの緯度・経度
+BOAT_LATLON = {
+    "桐生":   {"lat": 36.4028, "lon": 139.3344},
+    "戸田":   {"lat": 35.8153, "lon": 139.6425},
+    "江戸川": {"lat": 35.6925, "lon": 139.8681},
+    "平和島": {"lat": 35.5878, "lon": 139.7422},
+    "多摩川": {"lat": 35.6267, "lon": 139.4881},
+    "浜名湖": {"lat": 34.7189, "lon": 137.6033},
+    "蒲郡":   {"lat": 34.8264, "lon": 137.2478},
+    "常滑":   {"lat": 34.8864, "lon": 136.8283},
+    "津":     {"lat": 34.7192, "lon": 136.5142},
+    "三国":   {"lat": 36.2211, "lon": 136.1692},
+    "びわこ": {"lat": 35.0878, "lon": 135.9442},
+    "住之江": {"lat": 34.6122, "lon": 135.4842},
+    "尼崎":   {"lat": 34.7311, "lon": 135.4175},
+    "鳴門":   {"lat": 34.1736, "lon": 134.6203},
+    "丸亀":   {"lat": 34.2731, "lon": 133.7981},
+    "児島":   {"lat": 34.4572, "lon": 133.7461},
+    "宮島":   {"lat": 34.2953, "lon": 132.3292},
+    "徳山":   {"lat": 34.0481, "lon": 131.8061},
+    "下関":   {"lat": 33.9511, "lon": 130.9411},
+    "若松":   {"lat": 33.9056, "lon": 130.8111},
+    "芦屋":   {"lat": 33.8892, "lon": 130.6639},
+    "福岡":   {"lat": 33.6344, "lon": 130.4442},
+    "唐津":   {"lat": 33.4503, "lon": 129.9933},
+    "大村":   {"lat": 32.9311, "lon": 129.9531},
 }
 
-# 競艇場データ（Cプラン用）
+# ホームストレッチの向き（度数：0=北,90=東,180=南,270=西）
+COURSE_HEADING = {
+    "桐生": 180,   # 南向き
+    "戸田": 0,     # 北向き
+    "江戸川": 180, # 南向き
+    "平和島": 0,   # 北向き
+    "多摩川": 0,   # 北向き
+    "浜名湖": 180, # 南向き
+    "蒲郡": 180,   # 南向き
+    "常滑": 0,     # 北向き
+    "津": 0,       # 北向き
+    "三国": 180,   # 南向き
+    "びわこ": 0,   # 北向き
+    "住之江": 45,  # 北東向き（概ね）
+    "尼崎": 0,     # 北向き
+    "鳴門": 180,   # 南向き
+    "丸亀": 180,   # 南向き
+    "児島": 0,     # 北向き
+    "宮島": 180,   # 南向き
+    "徳山": 225,   # 南西向き
+    "下関": 0,     # 北向き
+    "若松": 180,   # 南向き
+    "芦屋": 0,     # 北向き
+    "福岡": 180,   # 南向き
+    "唐津": 0,     # 北向き
+    "大村": 180,   # 南向き
+}
+
+# 競艇場データ（Cプラン用の例）
 COURSE_DATA = {
     "丸亀": {
         "1コース1着率": 55,
@@ -44,57 +94,71 @@ COURSE_DATA = {
 RACER_DATA = {}
 MOTOR_DATA = {}
 
-# 朝7時の気象データ取得（正しいURL形式）
-def get_weather_morning(place):
-    code = AMEDAS_CODE.get(place)
-    if code is None:
-        return None, None
+# 角度差を -180〜180 に正規化
+def normalize_angle_diff(a, b):
+    diff = (a - b + 180) % 360 - 180
+    return diff
 
-    today = datetime.datetime.now().strftime("%Y%m%d")
-
-    # 07:00 → 06:50 → 06:40 → … → 05:00
-    times = ["0700","0650","0640","0630","0620","0610","0600","0550","0540","0530","0520","0510","0500"]
-
-    # 朝データを順に探す
-    for t in times:
-        url = f"https://www.jma.go.jp/bosai/amedas/data/{today}/{code}/{t}.json"
-        try:
-            data = requests.get(url, timeout=5).json()
-            info = data[0]
-            return info["wind_direction"]["value"], info["wind"]["value"]
-        except:
-            continue
-
-    # fallback：最新データを正しい形式で取得
-    try:
-        latest = requests.get("https://www.jma.go.jp/bosai/amedas/data/latest_time.txt").text.strip()
-
-        # latest は "202403180650" のような形式
-        latest_date = latest[:8]   # 20240318
-        latest_time = latest[8:]   # 0650
-
-        url = f"https://www.jma.go.jp/bosai/amedas/data/{latest_date}/{code}/{latest_time}.json"
-        data = requests.get(url, timeout=5).json()
-        info = data[0]
-        return info["wind_direction"]["value"], info["wind"]["value"]
-    except:
-        return None, None
-
-
-# 風向分類
-def classify_wind_direction(wind_dir):
-    if wind_dir is None:
+# 風向（度数）とコース向きから「追い風/向かい風/右横風/左横風」を判定（±30°厳密）
+def classify_relative_wind(place, wind_deg):
+    if wind_deg is None:
         return "不明"
-    if wind_dir in [0, 1]:
-        return "向かい風"
-    if wind_dir in [4, 5]:
-        return "追い風"
-    if wind_dir in [2, 3]:
-        return "右横風"
-    if wind_dir in [6, 7]:
-        return "左横風"
-    return "不明"
 
+    heading = COURSE_HEADING.get(place)
+    if heading is None:
+        return "不明"
+
+    # 追い風判定
+    diff_tail = normalize_angle_diff(wind_deg, heading)
+    # 向かい風判定（コース向き+180°）
+    opposite = (heading + 180) % 360
+    diff_head = normalize_angle_diff(wind_deg, opposite)
+
+    if abs(diff_tail) <= 30:
+        return "追い風"
+    if abs(diff_head) <= 30:
+        return "向かい風"
+
+    # 横風：右か左か
+    # 右横風：風がコース向きから見て右側（時計回り）に近い
+    # 左横風：風がコース向きから見て左側（反時計回り）に近い
+    # heading から見た風向の相対角
+    rel = normalize_angle_diff(wind_deg, heading)
+    if 0 < rel < 180:
+        return "右横風"
+    else:
+        return "左横風"
+
+# OpenWeatherMap から気象取得（※無料枠の都合で「現在の値」を使用）
+def get_weather(place):
+    info = BOAT_LATLON.get(place)
+    if info is None or not OWM_API_KEY:
+        return None, None, None
+
+    lat = info["lat"]
+    lon = info["lon"]
+
+    url = "https://api.openweathermap.org/data/2.5/weather"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "appid": OWM_API_KEY,
+        "units": "metric",
+        "lang": "ja"
+    }
+
+    try:
+        res = requests.get(url, params=params, timeout=5)
+        data = res.json()
+        wind = data.get("wind", {})
+        wind_speed = wind.get("speed")  # m/s
+        wind_deg = wind.get("deg")      # 0〜360°
+        weather_desc = None
+        if data.get("weather"):
+            weather_desc = data["weather"][0].get("description")
+        return wind_deg, wind_speed, weather_desc
+    except:
+        return None, None, None
 
 # モックデータ（後で実データに置換）
 def get_mock_race_data():
@@ -110,9 +174,8 @@ def get_mock_race_data():
         })
     return data
 
-
 # スコア計算
-def calculate_score(racer, place, wind_dir, wind_speed):
+def calculate_score(racer, place, wind_type, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
         racer["当地勝率"] * 6 +
@@ -121,12 +184,12 @@ def calculate_score(racer, place, wind_dir, wind_speed):
         (0.20 - racer["ST"]) * 100
     )
 
-    # 風の影響
-    if wind_dir == "追い風":
+    # 風の影響（種類＋風速）
+    if wind_type == "追い風":
         score += (wind_speed or 0) * 1.5
-    elif wind_dir == "向かい風":
+    elif wind_type == "向かい風":
         score -= (wind_speed or 0) * 1.2
-    elif wind_dir in ["右横風", "左横風"]:
+    elif wind_type in ["右横風", "左横風"]:
         score -= (wind_speed or 0) * 0.5
 
     # 競艇場補正
@@ -134,48 +197,48 @@ def calculate_score(racer, place, wind_dir, wind_speed):
     if course:
         lane = racer["艇番"]
         if lane == 1:
-            score += course["1コース1着率"] * 0.3
+            score += course.get("1コース1着率", 0) * 0.3
         if lane == 2:
-            score += course["2コース差し率"] * 0.2
+            score += course.get("2コース差し率", 0) * 0.2
         if lane == 3:
-            score += course["3コースまくり率"] * 0.2
+            score += course.get("3コースまくり率", 0) * 0.2
         if lane == 4:
-            score += course["4コースまくり差し率"] * 0.2
+            score += course.get("4コースまくり差し率", 0) * 0.2
 
-        # 風向き補正
-        wind_adj = course["風向き補正"].get(wind_dir, {})
+        wind_adj = course.get("風向き補正", {}).get(wind_type, {})
         score += wind_adj.get(str(lane), 0)
 
     return score
-
 
 # メイン予想
 def get_prediction(race_name):
     place = race_name[:2]
     today = datetime.datetime.now().strftime("%Y/%m/%d")
 
-    wind_dir_raw, wind_speed = get_weather_morning(place)
-    direction = classify_wind_direction(wind_dir_raw)
+    wind_deg, wind_speed, weather_desc = get_weather(place)
+    wind_type = classify_relative_wind(place, wind_deg)
 
     racers = get_mock_race_data()
-
     internal_scores = []
     for r in racers:
-        s = calculate_score(r, place, direction, wind_speed)
+        s = calculate_score(r, place, wind_type, wind_speed)
         internal_scores.append({"艇番": r["艇番"], "スコア": s})
 
     sorted_scores = sorted(internal_scores, key=lambda x: x["スコア"], reverse=True)
     top3 = sorted_scores[:3]
 
     wind_speed_display = wind_speed if wind_speed is not None else "不明"
+    wind_deg_display = wind_deg if wind_deg is not None else "不明"
+    weather_display = weather_desc if weather_desc is not None else "不明"
 
     text = f"""
 📅 {today}
 🏁【{race_name}】
 
-【気象（朝7時固定）】
-風向：{direction}
-風速：{wind_speed_display}m
+【気象（OpenWeather 現在値）】
+天気：{weather_display}
+風向：{wind_type}（方位：{wind_deg_display}°）
+風速：{wind_speed_display}m/s
 
 【スコア順位】
 1位：{top3[0]["艇番"]}号艇
@@ -197,15 +260,8 @@ def get_prediction(race_name):
 
     return text
 
-
 # 対応する競艇場一覧
-BOAT_RACES = [
-    "桐生","戸田","江戸川","平和島","多摩川",
-    "浜名湖","蒲郡","常滑",
-    "津","三国","びわこ","住之江","尼崎",
-    "鳴門","丸亀","児島","宮島","徳山",
-    "下関","若松","芦屋","福岡","唐津","大村"
-]
+BOAT_RACES = list(BOAT_LATLON.keys())
 
 
 @handler.add(MessageEvent, message=TextMessage)
