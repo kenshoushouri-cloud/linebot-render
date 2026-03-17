@@ -25,6 +25,58 @@ AMEDAS_CODE = {
     "芦屋": "82182", "福岡": "82131", "唐津": "82442", "大村": "84431"
 }
 
+# 競艇場データ（Cプラン用の土台：まずは一部だけ）
+COURSE_DATA = {
+    "丸亀": {
+        "1コース1着率": 55,
+        "2コース差し率": 28,
+        "3コースまくり率": 22,
+        "4コースまくり差し率": 30,
+        "風向き補正": {
+            "追い風": {"1": 5, "3": 3},
+            "向かい風": {"2": 4, "4": 2},
+            "右横風": {"1": -3},
+            "左横風": {"4": 3}
+        }
+    },
+    "下関": {
+        "1コース1着率": 60,
+        "2コース差し率": 25,
+        "3コースまくり率": 18,
+        "4コースまくり差し率": 26,
+        "風向き補正": {
+            "追い風": {"1": 4},
+            "向かい風": {"2": 3},
+        }
+    }
+    # 他場も後で追加していける形
+}
+
+# 将来用：選手データ・モーターデータの土台（今は空）
+RACER_DATA = {
+    # 例：
+    # 1234: {
+    #     "名前": "田中太郎",
+    #     "全国勝率": 6.45,
+    #     "当地勝率": 6.80,
+    #     "平均ST": 0.14,
+    #     "直近3ヶ月3連率": 62,
+    #     "事故率": 0.3,
+    # }
+}
+
+MOTOR_DATA = {
+    # 例：
+    # "丸亀": {
+    #     12: {
+    #         "2連率": 48,
+    #         "3連率": 62,
+    #         "伸び": 70,
+    #         "出足": 65
+    #     }
+    # }
+}
+
 # 朝7時の気象データ取得
 def get_weather_morning(place):
     try:
@@ -67,7 +119,7 @@ def classify_wind_direction(wind_dir):
     return "不明"
 
 
-# モックデータ生成
+# モックデータ生成（今はまだランダムだが、Cプランの枠組みは維持）
 def get_mock_race_data():
     data = []
     for i in range(1, 7):
@@ -82,8 +134,8 @@ def get_mock_race_data():
     return data
 
 
-# スコア計算
-def calculate_score(racer, wind_dir, wind_speed):
+# スコア計算（競艇場データも少し反映）
+def calculate_score(racer, place, wind_dir, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
         racer["当地勝率"] * 6 +
@@ -92,12 +144,33 @@ def calculate_score(racer, wind_dir, wind_speed):
         (0.20 - racer["ST"]) * 100
     )
 
+    # 風の影響
     if wind_dir == "追い風":
         score += (wind_speed or 0) * 1.5
     elif wind_dir == "向かい風":
         score -= (wind_speed or 0) * 1.2
     elif wind_dir in ["右横風", "左横風"]:
         score -= (wind_speed or 0) * 0.5
+
+    # 競艇場データの補正（簡易版）
+    course_info = COURSE_DATA.get(place)
+    if course_info:
+        lane = racer["艇番"]
+        # 1コース1着率などをざっくり加点
+        if lane == 1 and "1コース1着率" in course_info:
+            score += course_info["1コース1着率"] * 0.3
+        if lane == 2 and "2コース差し率" in course_info:
+            score += course_info["2コース差し率"] * 0.2
+        if lane == 3 and "3コースまくり率" in course_info:
+            score += course_info["3コースまくり率"] * 0.2
+        if lane == 4 and "4コースまくり差し率" in course_info:
+            score += course_info["4コースまくり差し率"] * 0.2
+
+        # 風向き補正
+        wind_adj = course_info.get("風向き補正", {})
+        lane_adj = wind_adj.get(wind_dir, {})
+        if lane_adj:
+            score += lane_adj.get(str(lane), 0)
 
     return score
 
@@ -114,7 +187,7 @@ def get_prediction(race_name):
 
     internal_scores = []
     for r in racers:
-        s = calculate_score(r, direction, wind_speed)
+        s = calculate_score(r, place, direction, wind_speed)
         internal_scores.append({"艇番": r["艇番"], "スコア": s})
 
     sorted_scores = sorted(internal_scores, key=lambda x: x["スコア"], reverse=True)
