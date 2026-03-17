@@ -26,17 +26,14 @@ AMEDAS_CODE = {
     "芦屋": "82182", "福岡": "82131", "唐津": "82442", "大村": "84431"
 }
 
-# 朝7時の気象データ取得（20分前までフォールバック）
+# 朝7時の気象データ取得（フォールバック付き）
 def get_weather_morning(place):
     try:
         code = AMEDAS_CODE.get(place)
         if code is None:
             return None, None
 
-        # 今日の日付
         today = datetime.datetime.now().strftime("%Y%m%d")
-
-        # 7:00 → 6:50 → 6:40 の順で試す
         times = ["0700", "0650", "0640"]
 
         for t in times:
@@ -44,7 +41,6 @@ def get_weather_morning(place):
             try:
                 data = requests.get(url, timeout=5).json()
                 info = data[0]
-
                 wind_dir = info["wind_direction"]["value"]
                 wind_speed = info["wind"]["value"]
                 return wind_dir, wind_speed
@@ -97,7 +93,6 @@ def calculate_score(racer, wind_dir, wind_speed):
         (0.20 - racer["ST"]) * 100
     )
 
-    # 風補正（軽め）
     if wind_dir == "追い風":
         score += wind_speed * 1.5
     elif wind_dir == "向かい風":
@@ -111,32 +106,24 @@ def calculate_score(racer, wind_dir, wind_speed):
 # メイン予想
 def get_prediction(race_name):
     place = race_name[:2]
-
-    # 日付
     today = datetime.datetime.now().strftime("%Y/%m/%d")
 
-    # 朝7時の気象データ
     wind_dir_raw, wind_speed = get_weather_morning(place)
     direction = classify_wind_direction(wind_dir_raw)
 
-    # 選手データ
     racers = get_mock_race_data()
 
-    # スコア計算（内部で6艇分保持）
     internal_scores = []
     for r in racers:
         s = calculate_score(r, direction, wind_speed)
         internal_scores.append({"艇番": r["艇番"], "スコア": s})
 
-    # スコア順に並べる
     sorted_scores = sorted(internal_scores, key=lambda x: x["スコア"], reverse=True)
+    top3 = sorted_scores[:3]
 
-    # 内部ログ（6艇分）
+    # 内部ログ
     print("【内部ログ】", today, race_name)
     print(sorted_scores)
-
-    # 表示は1〜3位のみ
-    top3 = sorted_scores[:3]
 
     text = f"""
 📅 {today}
@@ -150,6 +137,25 @@ def get_prediction(race_name):
 1位：{top3[0]["艇番"]}号艇
 2位：{top3[1]["艇番"]}号艇
 3位：{top3[2]["艇番"]}号艇
+"""
+
+    # --- 買い目生成（A-1方式） ---
+    first = top3[0]["艇番"]
+    second = top3[1]["艇番"]
+    third = top3[2]["艇番"]
+
+    confidence = round((top3[0]["スコア"] - top3[1]["スコア"]) / 10, 1)
+
+    honmei = f"{first}-{second}-{third}"
+    nakana = f"{second}-{first}-{third}"
+
+    text += f"""
+
+【本命 3連単 1点】
+{honmei}（確信度：{confidence}）
+
+【中穴 3連単 1点】
+{nakana}
 """
 
     return text
