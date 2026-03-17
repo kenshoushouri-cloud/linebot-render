@@ -38,26 +38,13 @@ COURSE_DATA = {
             "右横風": {"1": -3},
             "左横風": {"4": 3}
         }
-    },
-    "下関": {
-        "1コース1着率": 60,
-        "2コース差し率": 25,
-        "3コースまくり率": 18,
-        "4コースまくり差し率": 26,
-        "風向き補正": {
-            "追い風": {"1": 4},
-            "向かい風": {"2": 3},
-        }
     }
 }
 
-# 選手データ（今後追加）
 RACER_DATA = {}
-
-# モーターデータ（今後追加）
 MOTOR_DATA = {}
 
-# 朝7時の気象データ取得（無ければ過去に遡る）
+# 朝7時の気象データ取得（正しいURL形式）
 def get_weather_morning(place):
     code = AMEDAS_CODE.get(place)
     if code is None:
@@ -65,21 +52,19 @@ def get_weather_morning(place):
 
     today = datetime.datetime.now().strftime("%Y%m%d")
 
-    # 07:00 → 06:50 → 06:40 → … → 05:00 まで遡る
-    times = ["0700", "0650", "0640", "0630", "0620", "0610", "0600", "0550", "0540", "0530", "0520", "0510", "0500"]
+    # 07:00 → 06:50 → 06:40 → … → 05:00
+    times = ["0700","0650","0640","0630","0620","0610","0600","0550","0540","0530","0520","0510","0500"]
 
     for t in times:
-        url = f"https://www.jma.go.jp/bosai/amedas/data/{today}{t}/{code}.json"
+        url = f"https://www.jma.go.jp/bosai/amedas/data/{today}/{code}/{t}.json"
         try:
             data = requests.get(url, timeout=5).json()
             info = data[0]
-            wind_dir = info["wind_direction"]["value"]
-            wind_speed = info["wind"]["value"]
-            return wind_dir, wind_speed
+            return info["wind_direction"]["value"], info["wind"]["value"]
         except:
             continue
 
-    # どうしても無ければ「最新データ」を取得
+    # 最後の手段：最新データ
     try:
         latest = requests.get("https://www.jma.go.jp/bosai/amedas/data/latest_time.txt").text.strip()
         url = f"https://www.jma.go.jp/bosai/amedas/data/{latest}/{code}.json"
@@ -105,7 +90,7 @@ def classify_wind_direction(wind_dir):
     return "不明"
 
 
-# モックデータ生成（後で実データに置き換え）
+# モックデータ（後で実データに置換）
 def get_mock_race_data():
     data = []
     for i in range(1, 7):
@@ -120,7 +105,7 @@ def get_mock_race_data():
     return data
 
 
-# スコア計算（競艇場データも反映）
+# スコア計算
 def calculate_score(racer, place, wind_dir, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
@@ -138,24 +123,22 @@ def calculate_score(racer, place, wind_dir, wind_speed):
     elif wind_dir in ["右横風", "左横風"]:
         score -= (wind_speed or 0) * 0.5
 
-    # 競艇場データ補正
-    course_info = COURSE_DATA.get(place)
-    if course_info:
+    # 競艇場補正
+    course = COURSE_DATA.get(place)
+    if course:
         lane = racer["艇番"]
-
-        if lane == 1 and "1コース1着率" in course_info:
-            score += course_info["1コース1着率"] * 0.3
-        if lane == 2 and "2コース差し率" in course_info:
-            score += course_info["2コース差し率"] * 0.2
-        if lane == 3 and "3コースまくり率" in course_info:
-            score += course_info["3コースまくり率"] * 0.2
-        if lane == 4 and "4コースまくり差し率" in course_info:
-            score += course_info["4コースまくり差し率"] * 0.2
+        if lane == 1:
+            score += course["1コース1着率"] * 0.3
+        if lane == 2:
+            score += course["2コース差し率"] * 0.2
+        if lane == 3:
+            score += course["3コースまくり率"] * 0.2
+        if lane == 4:
+            score += course["4コースまくり差し率"] * 0.2
 
         # 風向き補正
-        wind_adj = course_info.get("風向き補正", {})
-        lane_adj = wind_adj.get(wind_dir, {})
-        score += lane_adj.get(str(lane), 0)
+        wind_adj = course["風向き補正"].get(wind_dir, {})
+        score += wind_adj.get(str(lane), 0)
 
     return score
 
@@ -194,10 +177,7 @@ def get_prediction(race_name):
 3位：{top3[2]["艇番"]}号艇
 """
 
-    first = top3[0]["艇番"]
-    second = top3[1]["艇番"]
-    third = top3[2]["艇番"]
-
+    first, second, third = top3[0]["艇番"], top3[1]["艇番"], top3[2]["艇番"]
     confidence = round((top3[0]["スコア"] - top3[1]["スコア"]) / 10, 1)
 
     text += f"""
@@ -226,26 +206,20 @@ BOAT_RACES = [
 def handle_message(event):
     user_text = event.message.text
 
-    # 「◯◯全レース」
     for place in BOAT_RACES:
         if place + "全レース" in user_text:
             predictions = []
             for r in range(1, 13):
-                race_name = f"{place}{r}R"
-                predictions.append(get_prediction(race_name))
-            reply_text = "\n\n".join(predictions)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                predictions.append(get_prediction(f"{place}{r}R"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage("\n\n".join(predictions)))
             return
 
-    # 「◯◯12R」
     for place in BOAT_RACES:
         if place in user_text and "R" in user_text:
-            reply_text = get_prediction(user_text)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(get_prediction(user_text)))
             return
 
-    # その他はオウム返し
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=user_text))
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(user_text))
 
 
 @app.route("/callback", methods=['POST'])
