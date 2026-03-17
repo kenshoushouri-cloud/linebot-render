@@ -130,7 +130,7 @@ def get_prediction(race_name):
 
 【気象（朝7時）】
 風向：{direction}
-風速：{wind_speed}m
+風速：{wind_speed if wind_speed is not None else "不明"}m
 
 【スコア順位】
 1位：{top3[0]["艇番"]}号艇
