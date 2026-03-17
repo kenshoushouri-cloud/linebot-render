@@ -159,7 +159,7 @@ def get_prediction(race_name):
 """
 
     return text
-わ
+
 
 
 @app.route("/callback", methods=['POST'])
