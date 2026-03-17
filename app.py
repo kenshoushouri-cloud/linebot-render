@@ -26,7 +26,7 @@ AMEDAS_CODE = {
     "芦屋": "82182", "福岡": "82131", "唐津": "82442", "大村": "84431"
 }
 
-# 朝7時の気象データ取得（フォールバック付き）
+# 朝7時の気象データ取得
 def get_weather_morning(place):
     try:
         code = AMEDAS_CODE.get(place)
