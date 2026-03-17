@@ -174,22 +174,6 @@ def callback():
 
     return 'OK'
 
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
-
-
-# 対応する競艇場一覧
-BOAT_RACES = [
-    "桐生","戸田","江戸川","平和島","多摩川",
-    "浜名湖","蒲郡","常滑",
-    "津","三国","びわこ","住之江","尼崎",
-    "鳴門","丸亀","児島","宮島","徳山",
-    "下関","若松","芦屋","福岡","唐津","大村"
-]
-
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_text = event.message.text
@@ -216,7 +200,7 @@ def handle_message(event):
                 event.reply_token,
                 TextSendMessage(text=reply_text)
             )
-            return
+         return
 
     # ③その他はオウム返し
     line_bot_api.reply_message(
@@ -224,3 +208,15 @@ def handle_message(event):
         TextSendMessage(text=user_text)
     )
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
+
+
+# 対応する競艇場一覧
+BOAT_RACES = [
+    "桐生","戸田","江戸川","平和島","多摩川",
+    "浜名湖","蒲郡","常滑",
+    "津","三国","びわこ","住之江","尼崎",
+    "鳴門","丸亀","児島","宮島","徳山",
+    "下関","若松","芦屋","福岡","唐津","大村"
+]
