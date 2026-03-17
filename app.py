@@ -68,7 +68,7 @@ def classify_wind_direction(wind_dir):
     return "不明"
 
 
-# モックデータ（後で実データに差し替え可能）
+# モックデータ
 def get_mock_race_data():
     data = []
     for i in range(1, 7):
@@ -159,7 +159,7 @@ def get_prediction(race_name):
 """
 
     return text
-
+わ
 
 
 @app.route("/callback", methods=['POST'])
