@@ -67,7 +67,7 @@ def classify_wind_direction(wind_dir):
     return "不明"
 
 
-# モックデータ
+# モックデータ生成
 def get_mock_race_data():
     data = []
     for i in range(1, 7):
@@ -93,11 +93,11 @@ def calculate_score(racer, wind_dir, wind_speed):
     )
 
     if wind_dir == "追い風":
-        score += wind_speed * 1.5
+        score += (wind_speed or 0) * 1.5
     elif wind_dir == "向かい風":
-        score -= wind_speed * 1.2
+        score -= (wind_speed or 0) * 1.2
     elif wind_dir in ["右横風", "左横風"]:
-        score -= wind_speed * 0.5
+        score -= (wind_speed or 0) * 0.5
 
     return score
 
@@ -124,13 +124,16 @@ def get_prediction(race_name):
     print("【内部ログ】", today, race_name)
     print(sorted_scores)
 
+    # 風速の表示を安全に処理
+    wind_speed_display = wind_speed if wind_speed is not None else "不明"
+
     text = f"""
 📅 {today}
 🏁【{race_name}】
 
 【気象（朝7時）】
 風向：{direction}
-風速：{wind_speed if wind_speed is not None else "不明"}m
+風速：{wind_speed_display}m
 
 【スコア順位】
 1位：{top3[0]["艇番"]}号艇
