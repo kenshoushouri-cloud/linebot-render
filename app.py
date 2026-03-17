@@ -13,10 +13,11 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 
 
-import random
 import requests
+import datetime
+import random
 
-# AMeDAS地点コード（風向相関優先）
+# AMeDAS地点コード
 AMEDAS_CODE = {
     "桐生": "42111", "戸田": "43372", "江戸川": "44132", "平和島": "44132", "多摩川": "44132",
     "浜名湖": "50331", "蒲郡": "51106", "常滑": "53133", "津": "53141", "三国": "54012",
@@ -25,30 +26,36 @@ AMEDAS_CODE = {
     "芦屋": "82182", "福岡": "82131", "唐津": "82442", "大村": "84431"
 }
 
-# 気象データ取得（AMeDAS地点コード版）
-def get_weather(place):
+# 朝7時の気象データ取得（20分前までフォールバック）
+def get_weather_morning(place):
     try:
         code = AMEDAS_CODE.get(place)
         if code is None:
             return None, None
 
-        # 最新時刻取得
-        latest = requests.get("https://www.jma.go.jp/bosai/amedas/data/latest_time.json", timeout=5).json()
-        latest_time = list(latest.values())[0]
+        # 今日の日付
+        today = datetime.datetime.now().strftime("%Y%m%d")
 
-        # 地点コードで直接アクセス
-        url = f"https://www.jma.go.jp/bosai/amedas/data/{latest_time}/{code}.json"
-        data = requests.get(url, timeout=5).json()
+        # 7:00 → 6:50 → 6:40 の順で試す
+        times = ["0700", "0650", "0640"]
 
-        info = data[0]  # 最新データ
+        for t in times:
+            url = f"https://www.jma.go.jp/bosai/amedas/data/{today}{t}/{code}.json"
+            try:
+                data = requests.get(url, timeout=5).json()
+                info = data[0]
 
-        wind_dir = info["wind_direction"]["value"]
-        wind_speed = info["wind"]["value"]
+                wind_dir = info["wind_direction"]["value"]
+                wind_speed = info["wind"]["value"]
+                return wind_dir, wind_speed
+            except:
+                continue
 
-        return wind_dir, wind_speed
+        return None, None
 
     except:
         return None, None
+
 
 # 風向分類
 def classify_wind_direction(wind_dir):
@@ -64,124 +71,87 @@ def classify_wind_direction(wind_dir):
         return "左横風"
     return "不明"
 
-# 風補正
-def wind_score_adjust(direction, speed):
-    if speed is None:
-        return 0
 
-    score = 0
+# モックデータ（後で実データに差し替え可能）
+def get_mock_race_data():
+    data = []
+    for i in range(1, 7):
+        data.append({
+            "艇番": i,
+            "全国勝率": round(random.uniform(4.0, 7.5), 2),
+            "当地勝率": round(random.uniform(4.0, 7.5), 2),
+            "モーター": random.randint(20, 80),
+            "ボート": random.randint(20, 80),
+            "ST": round(random.uniform(0.10, 0.20), 2)
+        })
+    return data
 
-    if direction == "追い風":
-        score += speed * 0.3
-    elif direction == "向かい風":
-        score += speed * 0.4
-    elif direction == "右横風":
-        score += speed * 0.5
-    elif direction == "左横風":
-        score += speed * 0.5
 
-    if speed >= 7:
-        score -= 1.5
-    elif speed >= 5:
-        score += 1.0
+# スコア計算
+def calculate_score(racer, wind_dir, wind_speed):
+    score = (
+        racer["全国勝率"] * 8 +
+        racer["当地勝率"] * 6 +
+        racer["モーター"] * 0.4 +
+        racer["ボート"] * 0.3 +
+        (0.20 - racer["ST"]) * 100
+    )
+
+    # 風補正（軽め）
+    if wind_dir == "追い風":
+        score += wind_speed * 1.5
+    elif wind_dir == "向かい風":
+        score -= wind_speed * 1.2
+    elif wind_dir in ["右横風", "左横風"]:
+        score -= wind_speed * 0.5
 
     return score
 
-# 仮データ生成
-def get_mock_race_data():
-    data = []
-    for lane in range(1, 7):
-        player = {
-            "lane": lane,
-            "name": f"選手{lane}",
-            "national_win": round(random.uniform(4.0, 7.5), 2),
-            "local_win": round(random.uniform(4.0, 7.5), 2),
-            "motor": random.randint(20, 60),
-            "boat": random.randint(20, 60),
-            "st": round(random.uniform(0.10, 0.25), 2),
-            "penalty": random.choice([0, 0, 0, 1]),
-            "comment": random.choice(["伸び", "出足", "普通", ""]),
-            "mark": random.choice(["◎", "○", "▲", "△", ""])
-        }
-        data.append(player)
-    return data
-
-# スコア計算
-def calculate_score(p):
-    score = 0
-    score += p["national_win"] * 2
-    score += p["local_win"] * 1.2
-    score += (p["motor"] / 3)
-    score += (p["boat"] / 4)
-    score += (6 - p["lane"]) * 0.8
-    score -= p["st"] * 10
-    score -= p["penalty"] * 3
-
-    if p["comment"] == "伸び":
-        score += 1.5
-    elif p["comment"] == "出足":
-        score += 1.0
-
-    if p["mark"] == "◎":
-        score += 1.2
-    elif p["mark"] == "○":
-        score += 0.8
-    elif p["mark"] == "▲":
-        score += 0.4
-
-    return round(score, 1)
 
 # メイン予想
 def get_prediction(race_name):
     place = race_name[:2]
 
-    # 気象データ取得
-    wind_dir_raw, wind_speed = get_weather(place)
+    # 日付
+    today = datetime.datetime.now().strftime("%Y/%m/%d")
+
+    # 朝7時の気象データ
+    wind_dir_raw, wind_speed = get_weather_morning(place)
     direction = classify_wind_direction(wind_dir_raw)
 
-    players = get_mock_race_data()
+    # 選手データ
+    racers = get_mock_race_data()
 
-    # スコア計算＋風補正
-    for p in players:
-        p["score"] = calculate_score(p)
-        p["score"] += wind_score_adjust(direction, wind_speed)
+    # スコア計算（内部で6艇分保持）
+    internal_scores = []
+    for r in racers:
+        s = calculate_score(r, direction, wind_speed)
+        internal_scores.append({"艇番": r["艇番"], "スコア": s})
 
-    sorted_players = sorted(players, key=lambda x: x["score"], reverse=True)
+    # スコア順に並べる
+    sorted_scores = sorted(internal_scores, key=lambda x: x["スコア"], reverse=True)
 
-    D = round(sorted_players[0]["score"] - sorted_players[1]["score"], 1)
+    # 内部ログ（6艇分）
+    print("【内部ログ】", today, race_name)
+    print(sorted_scores)
 
-    if D >= 5.5:
-        rank = "鉄板"
-    elif D >= 4.1:
-        rank = "買い"
-    else:
-        rank = "スルー"
-
-    honmei = f"{sorted_players[0]['lane']}-{sorted_players[1]['lane']}-{sorted_players[2]['lane']}"
-    haran = f"{sorted_players[1]['lane']}-{sorted_players[0]['lane']}-{sorted_players[2]['lane']}"
+    # 表示は1〜3位のみ
+    top3 = sorted_scores[:3]
 
     text = f"""
+📅 {today}
 🏁【{race_name}】
 
-【気象】
+【気象（朝7時）】
 風向：{direction}
 風速：{wind_speed}m
 
 【スコア順位】
-1位：{sorted_players[0]['lane']}号艇（{sorted_players[0]['name']}）［{sorted_players[0]['score']}］
-2位：{sorted_players[1]['lane']}号艇（{sorted_players[1]['name']}）［{sorted_players[1]['score']}］
-3位：{sorted_players[2]['lane']}号艇（{sorted_players[2]['name']}）［{sorted_players[2]['score']}］
-
-【展開予想】
-■本命：{honmei}
-■波乱：{haran}
-
-【本命 3連単 1点】
-{honmei}（確信度：{D}［{rank}］）
-
-【中穴 3連単 1点】
-なし
+1位：{top3[0]["艇番"]}号艇
+2位：{top3[1]["艇番"]}号艇
+3位：{top3[2]["艇番"]}号艇
 """
+
     return text
 
 
