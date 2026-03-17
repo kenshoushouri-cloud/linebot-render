@@ -25,7 +25,7 @@ AMEDAS_CODE = {
     "芦屋": "82182", "福岡": "82131", "唐津": "82442", "大村": "84431"
 }
 
-# 競艇場データ（Cプラン用の土台：まずは一部だけ）
+# 競艇場データ（Cプラン用）
 COURSE_DATA = {
     "丸亀": {
         "1コース1着率": 55,
@@ -49,57 +49,43 @@ COURSE_DATA = {
             "向かい風": {"2": 3},
         }
     }
-    # 他場も後で追加していける形
 }
 
-# 将来用：選手データ・モーターデータの土台（今は空）
-RACER_DATA = {
-    # 例：
-    # 1234: {
-    #     "名前": "田中太郎",
-    #     "全国勝率": 6.45,
-    #     "当地勝率": 6.80,
-    #     "平均ST": 0.14,
-    #     "直近3ヶ月3連率": 62,
-    #     "事故率": 0.3,
-    # }
-}
+# 選手データ（今後追加）
+RACER_DATA = {}
 
-MOTOR_DATA = {
-    # 例：
-    # "丸亀": {
-    #     12: {
-    #         "2連率": 48,
-    #         "3連率": 62,
-    #         "伸び": 70,
-    #         "出足": 65
-    #     }
-    # }
-}
+# モーターデータ（今後追加）
+MOTOR_DATA = {}
 
-# 朝7時の気象データ取得
+# 朝7時の気象データ取得（無ければ過去に遡る）
 def get_weather_morning(place):
-    try:
-        code = AMEDAS_CODE.get(place)
-        if code is None:
-            return None, None
-
-        today = datetime.datetime.now().strftime("%Y%m%d")
-        times = ["0700", "0650", "0640"]
-
-        for t in times:
-            url = f"https://www.jma.go.jp/bosai/amedas/data/{today}{t}/{code}.json"
-            try:
-                data = requests.get(url, timeout=5).json()
-                info = data[0]
-                wind_dir = info["wind_direction"]["value"]
-                wind_speed = info["wind"]["value"]
-                return wind_dir, wind_speed
-            except:
-                continue
-
+    code = AMEDAS_CODE.get(place)
+    if code is None:
         return None, None
 
+    today = datetime.datetime.now().strftime("%Y%m%d")
+
+    # 07:00 → 06:50 → 06:40 → … → 05:00 まで遡る
+    times = ["0700", "0650", "0640", "0630", "0620", "0610", "0600", "0550", "0540", "0530", "0520", "0510", "0500"]
+
+    for t in times:
+        url = f"https://www.jma.go.jp/bosai/amedas/data/{today}{t}/{code}.json"
+        try:
+            data = requests.get(url, timeout=5).json()
+            info = data[0]
+            wind_dir = info["wind_direction"]["value"]
+            wind_speed = info["wind"]["value"]
+            return wind_dir, wind_speed
+        except:
+            continue
+
+    # どうしても無ければ「最新データ」を取得
+    try:
+        latest = requests.get("https://www.jma.go.jp/bosai/amedas/data/latest_time.txt").text.strip()
+        url = f"https://www.jma.go.jp/bosai/amedas/data/{latest}/{code}.json"
+        data = requests.get(url, timeout=5).json()
+        info = data[0]
+        return info["wind_direction"]["value"], info["wind"]["value"]
     except:
         return None, None
 
@@ -119,7 +105,7 @@ def classify_wind_direction(wind_dir):
     return "不明"
 
 
-# モックデータ生成（今はまだランダムだが、Cプランの枠組みは維持）
+# モックデータ生成（後で実データに置き換え）
 def get_mock_race_data():
     data = []
     for i in range(1, 7):
@@ -134,7 +120,7 @@ def get_mock_race_data():
     return data
 
 
-# スコア計算（競艇場データも少し反映）
+# スコア計算（競艇場データも反映）
 def calculate_score(racer, place, wind_dir, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
@@ -152,11 +138,11 @@ def calculate_score(racer, place, wind_dir, wind_speed):
     elif wind_dir in ["右横風", "左横風"]:
         score -= (wind_speed or 0) * 0.5
 
-    # 競艇場データの補正（簡易版）
+    # 競艇場データ補正
     course_info = COURSE_DATA.get(place)
     if course_info:
         lane = racer["艇番"]
-        # 1コース1着率などをざっくり加点
+
         if lane == 1 and "1コース1着率" in course_info:
             score += course_info["1コース1着率"] * 0.3
         if lane == 2 and "2コース差し率" in course_info:
@@ -169,8 +155,7 @@ def calculate_score(racer, place, wind_dir, wind_speed):
         # 風向き補正
         wind_adj = course_info.get("風向き補正", {})
         lane_adj = wind_adj.get(wind_dir, {})
-        if lane_adj:
-            score += lane_adj.get(str(lane), 0)
+        score += lane_adj.get(str(lane), 0)
 
     return score
 
@@ -193,18 +178,13 @@ def get_prediction(race_name):
     sorted_scores = sorted(internal_scores, key=lambda x: x["スコア"], reverse=True)
     top3 = sorted_scores[:3]
 
-    # 内部ログ
-    print("【内部ログ】", today, race_name)
-    print(sorted_scores)
-
-    # 風速の表示を安全に処理
     wind_speed_display = wind_speed if wind_speed is not None else "不明"
 
     text = f"""
 📅 {today}
 🏁【{race_name}】
 
-【気象（朝7時）】
+【気象（朝7時固定）】
 風向：{direction}
 風速：{wind_speed_display}m
 
@@ -214,23 +194,19 @@ def get_prediction(race_name):
 3位：{top3[2]["艇番"]}号艇
 """
 
-    # --- 買い目生成（A-1方式） ---
     first = top3[0]["艇番"]
     second = top3[1]["艇番"]
     third = top3[2]["艇番"]
 
     confidence = round((top3[0]["スコア"] - top3[1]["スコア"]) / 10, 1)
 
-    honmei = f"{first}-{second}-{third}"
-    nakana = f"{second}-{first}-{third}"
-
     text += f"""
 
 【本命 3連単 1点】
-{honmei}（確信度：{confidence}）
+{first}-{second}-{third}（確信度：{confidence}）
 
 【中穴 3連単 1点】
-{nakana}
+{second}-{first}-{third}
 """
 
     return text
@@ -250,7 +226,7 @@ BOAT_RACES = [
 def handle_message(event):
     user_text = event.message.text
 
-    # ①「◯◯全レース」の場合
+    # 「◯◯全レース」
     for place in BOAT_RACES:
         if place + "全レース" in user_text:
             predictions = []
@@ -258,27 +234,18 @@ def handle_message(event):
                 race_name = f"{place}{r}R"
                 predictions.append(get_prediction(race_name))
             reply_text = "\n\n".join(predictions)
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text=reply_text)
-            )
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             return
 
-    # ②「◯◯◯R」の場合（例：丸亀12R）
+    # 「◯◯12R」
     for place in BOAT_RACES:
         if place in user_text and "R" in user_text:
             reply_text = get_prediction(user_text)
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text=reply_text)
-            )
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             return
 
-    # ③その他はオウム返し
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=user_text)
-    )
+    # その他はオウム返し
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=user_text))
 
 
 @app.route("/callback", methods=['POST'])
