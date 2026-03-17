@@ -12,6 +12,172 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 import random
+import requests
+
+# 競艇場 → 気象庁観測地点
+WEATHER_MAP = {
+    "桐生": "前橋", "戸田": "さいたま", "江戸川": "東京", "平和島": "東京", "多摩川": "東京",
+    "浜名湖": "浜松", "蒲郡": "豊橋", "常滑": "中部国際空港", "津": "津", "三国": "福井",
+    "びわこ": "彦根", "住之江": "大阪", "尼崎": "神戸", "鳴門": "徳島", "丸亀": "高松",
+    "児島": "岡山", "宮島": "廿日市", "徳山": "下松", "下関": "下関", "若松": "北九州",
+    "芦屋": "北九州", "福岡": "福岡", "唐津": "佐賀", "大村": "長崎"
+}
+
+# 気象データ取得
+def get_weather(place):
+    try:
+        point = WEATHER_MAP.get(place, "東京")
+        latest = requests.get("https://www.jma.go.jp/bosai/amedas/data/latest_time.json", timeout=5).json()
+        latest_time = list(latest.values())[0]
+
+        data = requests.get(f"https://www.jma.go.jp/bosai/amedas/data/{latest_time}.json", timeout=5).json()
+
+        for code, info in data.items():
+            if info.get("name") == point:
+                wind_dir = info["wind_direction"]["value"]
+                wind_speed = info["wind"]["value"]
+                return wind_dir, wind_speed
+
+        return None, None
+    except:
+        return None, None
+
+# 風向分類
+def classify_wind_direction(wind_dir):
+    if wind_dir is None:
+        return "不明"
+    if wind_dir in [0, 1]:
+        return "向かい風"
+    if wind_dir in [4, 5]:
+        return "追い風"
+    if wind_dir in [2, 3]:
+        return "右横風"
+    if wind_dir in [6, 7]:
+        return "左横風"
+    return "不明"
+
+# 風補正
+def wind_score_adjust(direction, speed):
+    if speed is None:
+        return 0
+
+    score = 0
+
+    if direction == "追い風":
+        score += speed * 0.3
+    elif direction == "向かい風":
+        score += speed * 0.4
+    elif direction == "右横風":
+        score += speed * 0.5
+    elif direction == "左横風":
+        score += speed * 0.5
+
+    if speed >= 7:
+        score -= 1.5
+    elif speed >= 5:
+        score += 1.0
+
+    return score
+
+# 仮データ生成
+def get_mock_race_data():
+    data = []
+    for lane in range(1, 7):
+        player = {
+            "lane": lane,
+            "name": f"選手{lane}",
+            "national_win": round(random.uniform(4.0, 7.5), 2),
+            "local_win": round(random.uniform(4.0, 7.5), 2),
+            "motor": random.randint(20, 60),
+            "boat": random.randint(20, 60),
+            "st": round(random.uniform(0.10, 0.25), 2),
+            "penalty": random.choice([0, 0, 0, 1]),
+            "comment": random.choice(["伸び", "出足", "普通", ""]),
+            "mark": random.choice(["◎", "○", "▲", "△", ""])
+        }
+        data.append(player)
+    return data
+
+# スコア計算
+def calculate_score(p):
+    score = 0
+    score += p["national_win"] * 2
+    score += p["local_win"] * 1.2
+    score += (p["motor"] / 3)
+    score += (p["boat"] / 4)
+    score += (6 - p["lane"]) * 0.8
+    score -= p["st"] * 10
+    score -= p["penalty"] * 3
+
+    if p["comment"] == "伸び":
+        score += 1.5
+    elif p["comment"] == "出足":
+        score += 1.0
+
+    if p["mark"] == "◎":
+        score += 1.2
+    elif p["mark"] == "○":
+        score += 0.8
+    elif p["mark"] == "▲":
+        score += 0.4
+
+    return round(score, 1)
+
+# メイン予想
+def get_prediction(race_name):
+    place = race_name[:2]
+
+    # 気象データ取得
+    wind_dir_raw, wind_speed = get_weather(place)
+    direction = classify_wind_direction(wind_dir_raw)
+
+    players = get_mock_race_data()
+
+    # スコア計算＋風補正
+    for p in players:
+        p["score"] = calculate_score(p)
+        p["score"] += wind_score_adjust(direction, wind_speed)
+
+    sorted_players = sorted(players, key=lambda x: x["score"], reverse=True)
+
+    D = round(sorted_players[0]["score"] - sorted_players[1]["score"], 1)
+
+    if D >= 5.5:
+        rank = "鉄板"
+    elif D >= 4.1:
+        rank = "買い"
+    else:
+        rank = "スルー"
+
+    honmei = f"{sorted_players[0]['lane']}-{sorted_players[1]['lane']}-{sorted_players[2]['lane']}"
+    haran = f"{sorted_players[1]['lane']}-{sorted_players[0]['lane']}-{sorted_players[2]['lane']}"
+
+    text = f"""
+🏁【{race_name}】
+
+【気象】
+風向：{direction}
+風速：{wind_speed}m
+
+【スコア順位】
+1位：{sorted_players[0]['lane']}号艇（{sorted_players[0]['name']}）［{sorted_players[0]['score']}］
+2位：{sorted_players[1]['lane']}号艇（{sorted_players[1]['name']}）［{sorted_players[1]['score']}］
+3位：{sorted_players[2]['lane']}号艇（{sorted_players[2]['name']}）［{sorted_players[2]['score']}］
+
+【展開予想】
+■本命：{honmei}
+■波乱：{haran}
+
+【本命 3連単 1点】
+{honmei}（確信度：{D}［{rank}］）
+
+【中穴 3連単 1点】
+なし
+"""
+    return text
+
+
+import random
 
 # 仮データ生成（ランダム）
 def get_mock_race_data():
