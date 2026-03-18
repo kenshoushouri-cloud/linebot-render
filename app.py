@@ -52,14 +52,52 @@ import requests
 import datetime
 import random
 
-# ===== OpenWeatherMap APIキー =====
-OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
+from flask import Flask, request, abort
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
-# ====== Render のヘルスチェック用（最重要） ======
+# Flask アプリ
+app = Flask(__name__)
+
+# ===== LINE チャネル設定 =====
+LINE_CHANNEL_ACCESS_TOKEN = "My0MUGnag0QWdWeC6PdIBOxD+Xe0u/nU/CjH9qSzfui4pfZcML1H3RaUUHyyIx+XwEM+FKrzxSLPfB/CT2Mu9r6j3+OQ7dW3s14JzS2cnob2LrLlQ8ZVzVOY6XLo2eeseYwzPorkAEKvrgaRtLq7+AdB04t89/1O/w1cDnyilFU="
+LINE_CHANNEL_SECRET = "a550cf4c2a8c3d2342efa2be2415b017"
+
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# ===== Render のヘルスチェック =====
 @app.route("/", methods=["GET"])
 def index():
     return "OK", 200
 
+# ===== LINE Webhook 受信 =====
+@app.route("/callback", methods=["POST"])
+def callback():
+    signature = request.headers.get("X-Line-Signature")
+    body = request.get_data(as_text=True)
+
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+
+    return "OK"
+
+# ===== メッセージ受信時の処理 =====
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    user_text = event.message.text
+    reply_text = get_prediction(user_text)
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_text)
+    )
+
+
+# ===== OpenWeatherMap APIキー =====
+OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
 
 # ===== 競艇場データ =====
 BOAT_LATLON = {
