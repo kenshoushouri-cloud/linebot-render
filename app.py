@@ -94,7 +94,7 @@ def handle_message(event):
     if not creds:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="Google 認証が必要です。\n以下をタップしてください：\nhttps://あなたのRenderURL/authorize")
+            TextSendMessage(text="Google 認証が必要です。\n以下をタップしてください：\https://linebot-render-yfj4.onrender.com")
         )
         return
 
