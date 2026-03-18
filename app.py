@@ -17,7 +17,7 @@ import datetime
 import random
 
 # ===== OpenWeatherMap APIキー =====
-OWM_API_KEY = "4b0b25a0be9d98fdb318f20ecc701f09"
+OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
 
 # ====== Render のヘルスチェック用（最重要） ======
 @app.route("/", methods=["GET"])
