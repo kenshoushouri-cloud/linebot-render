@@ -100,7 +100,7 @@ def handle_message(event):
 
     # ===== Sheets に書き込み =====
     service = build("sheets", "v4", credentials=creds)
-    sheet_id = "https://docs.google.com/spreadsheets/d/1-DXbAAyhKS2ZRrDVGN-FBp4_b4LkXmm22AqxHBdQFIQ/edit?usp=drivesdk"  # ←ここを書き換える
+    sheet_id = "1-DXbAAyhKS2ZRrDVGN-FBp4_b4LkXmm22AqxHBdQFIQ"  # ←ここを書き換える
 
     values = [[user_text]]
     body = {"values": values}
