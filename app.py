@@ -17,7 +17,7 @@ import datetime
 import random
 
 # ===== OpenWeatherMap APIキー =====
-OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
+OWM_API_KEY = "4b0b25a0be9d98fdb318f20ecc701f09"
 
 # 競艇場の緯度・経度
 BOAT_LATLON = {
@@ -73,8 +73,8 @@ COURSE_DATA = {
 }
 
 # ===== 気象キャッシュ =====
-DAILY_WEATHER = {}          # { "丸亀": {"deg": 180, "speed": 3.5, "desc": "晴れ"} }
-LAST_WEATHER_DAY = None     # 「気象の日付」（7時またぎ対応）
+DAILY_WEATHER = {}
+LAST_WEATHER_DAY = None
 
 def _weather_day(now):
     """7時を境に気象日を決定"""
