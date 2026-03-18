@@ -7,15 +7,37 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+# ===== Google Sheets 用 =====
+import gspread
+from google.oauth2.service_account import Credentials
+
 # Flask アプリ
 app = Flask(__name__)
 
 # ===== LINE チャネル設定 =====
-LINE_CHANNEL_ACCESS_TOKEN = "My0MUGnag0QWdWeC6PdIBOxD+Xe0u/nU/CjH9qSzfui4pfZcML1H3RaUUHyyIx+XwEM+FKrzxSLPfB/CT2Mu9r6j3+OQ7dW3s14JzS2cnob2LrLlQ8ZVzVOY6XLo2eeseYwzPorkAEKvrgaRtLq7+AdB04t89/1O/w1cDnyilFU="
-LINE_CHANNEL_SECRET = "a550cf4c2a8c3d2342efa2be2415b017"
+LINE_CHANNEL_ACCESS_TOKEN = "My0MUGnag0QWdWeC6PdIBOxD+Xe0u/nU/CjH9qSzfui4pfZcML1H3RaUUHyyIx+XwEM+FKrzxSLPfB/CT2Mu9r6j3+OQ7dW3s14JzS2cnob2LrLlQ8ZVzVOY6XLo2eeseYwzPorkAEKvrgaRtLq7+AdB04t89/1O/w1cDnyilFU="   # ← あなたのトークンを貼る
+LINE_CHANNEL_SECRET = "a550cf4c2a8c3d2342efa2be2415b017"         # ← あなたのシークレットを貼る
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# ===== Google Sheets 設定 =====
+SPREADSHEET_ID = "1-DXbAAyhKS2ZRrDVGN-FBp4_b4LkXmm22AqxHBdQFIQ"
+SERVICE_ACCOUNT_FILE = "service_account.json"
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+credentials = Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE,
+    scopes=SCOPES
+)
+
+gc = gspread.authorize(credentials)
+sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+
 
 # ===== Render のヘルスチェック =====
 @app.route("/", methods=["GET"])
@@ -211,6 +233,22 @@ def calculate_score(racer, place, wind_type, wind_speed):
 
     return score
 
+# ===== Sheets 書き込み関数 =====
+def save_prediction_to_sheet(place, race_name, top3, wind_type, wind_speed, confidence):
+    row = [
+        datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
+        place,
+        race_name,
+        top3[0]["艇番"],
+        top3[1]["艇番"],
+        top3[2]["艇番"],
+        wind_type,
+        wind_speed,
+        confidence
+    ]
+    sheet.append_row(row)
+
+
 def get_prediction(race_name):
     place = race_name[:2]
     today = datetime.datetime.now().strftime("%Y/%m/%d")
@@ -249,6 +287,13 @@ def get_prediction(race_name):
 {second}-{first}-{third}
 """
 
+    # ===== Sheets に保存 =====
+    save_prediction_to_sheet(place, race_name, top3, wind_type, wind_speed, confidence)
+
     return text
 
 BOAT_RACES = list(BOAT_LATLON.keys())
+
+# ===== ローカル実行用 =====
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
