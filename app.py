@@ -17,9 +17,15 @@ import datetime
 import random
 
 # ===== OpenWeatherMap APIキー =====
-OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
+OWM_API_KEY = "4b0b25a0be9d98fdb318f20ecc701f09"
 
-# 競艇場の緯度・経度
+# ====== Render のヘルスチェック用（最重要） ======
+@app.route("/", methods=["GET"])
+def index():
+    return "OK", 200
+
+
+# ===== 競艇場データ =====
 BOAT_LATLON = {
     "桐生": {"lat": 36.4028, "lon": 139.3344},
     "戸田": {"lat": 35.8153, "lon": 139.6425},
@@ -47,7 +53,6 @@ BOAT_LATLON = {
     "大村": {"lat": 32.9311, "lon": 129.9531},
 }
 
-# ホームストレッチの向き（度数）
 COURSE_HEADING = {
     "桐生": 180, "戸田": 0, "江戸川": 180, "平和島": 0, "多摩川": 0,
     "浜名湖": 180, "蒲郡": 180, "常滑": 0, "津": 0, "三国": 180,
@@ -56,7 +61,6 @@ COURSE_HEADING = {
     "芦屋": 0, "福岡": 180, "唐津": 0, "大村": 180,
 }
 
-# 競艇場データ（例）
 COURSE_DATA = {
     "丸亀": {
         "1コース1着率": 55,
@@ -77,63 +81,48 @@ DAILY_WEATHER = {}
 LAST_WEATHER_DAY = None
 
 def _weather_day(now):
-    """7時を境に気象日を決定"""
-    if now.hour >= 7:
-        return now.date()
-    else:
-        return now.date() - datetime.timedelta(days=1)
+    return now.date() if now.hour >= 7 else now.date() - datetime.timedelta(days=1)
 
 def fetch_weather(place):
-    """単一場の現在気象を取得"""
     info = BOAT_LATLON.get(place)
-    if info is None:
+    if not info:
         return None, None, None
 
-    url = "https://api.openweathermap.org/data/2.5/weather"
-    params = {
-        "lat": info["lat"],
-        "lon": info["lon"],
-        "appid": OWM_API_KEY,
-        "units": "metric",
-        "lang": "ja"
-    }
-
     try:
-        res = requests.get(url, params=params, timeout=5)
+        res = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={
+                "lat": info["lat"],
+                "lon": info["lon"],
+                "appid": OWM_API_KEY,
+                "units": "metric",
+                "lang": "ja"
+            },
+            timeout=4
+        )
         data = res.json()
         wind = data.get("wind", {})
-        wind_speed = wind.get("speed")
-        wind_deg = wind.get("deg")
-        desc = data["weather"][0]["description"] if data.get("weather") else None
-        return wind_deg, wind_speed, desc
+        return wind.get("deg"), wind.get("speed"), data["weather"][0]["description"]
     except:
         return None, None, None
 
 def get_weather(place):
-    """必要な場だけ気象を取得し、7時以降は更新"""
     global DAILY_WEATHER, LAST_WEATHER_DAY
 
     now = datetime.datetime.now()
-    today_weather_day = _weather_day(now)
+    today = _weather_day(now)
 
-    # 日付が変わったらキャッシュリセット
-    if LAST_WEATHER_DAY != today_weather_day:
+    if LAST_WEATHER_DAY != today:
         DAILY_WEATHER = {}
-        LAST_WEATHER_DAY = today_weather_day
+        LAST_WEATHER_DAY = today
 
-    # まだ取得していない場なら取得
     if place not in DAILY_WEATHER:
         deg, speed, desc = fetch_weather(place)
-        DAILY_WEATHER[place] = {
-            "deg": deg,
-            "speed": speed,
-            "desc": desc
-        }
+        DAILY_WEATHER[place] = {"deg": deg, "speed": speed, "desc": desc}
 
     w = DAILY_WEATHER[place]
     return w["deg"], w["speed"], w["desc"]
 
-# ===== 風向判定 =====
 def normalize_angle_diff(a, b):
     return (a - b + 180) % 360 - 180
 
@@ -146,8 +135,7 @@ def classify_relative_wind(place, wind_deg):
         return "不明"
 
     diff_tail = normalize_angle_diff(wind_deg, heading)
-    opposite = (heading + 180) % 360
-    diff_head = normalize_angle_diff(wind_deg, opposite)
+    diff_head = normalize_angle_diff(wind_deg, (heading + 180) % 360)
 
     if abs(diff_tail) <= 30:
         return "追い風"
@@ -157,7 +145,6 @@ def classify_relative_wind(place, wind_deg):
     rel = normalize_angle_diff(wind_deg, heading)
     return "右横風" if 0 < rel < 180 else "左横風"
 
-# ===== モックデータ =====
 def get_mock_race_data():
     return [{
         "艇番": i,
@@ -168,7 +155,6 @@ def get_mock_race_data():
         "ST": round(random.uniform(0.10, 0.20), 2)
     } for i in range(1, 7)]
 
-# ===== スコア計算 =====
 def calculate_score(racer, place, wind_type, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
@@ -201,7 +187,6 @@ def calculate_score(racer, place, wind_type, wind_speed):
 
     return score
 
-# ===== 予想メイン =====
 def get_prediction(race_name):
     place = race_name[:2]
     today = datetime.datetime.now().strftime("%Y/%m/%d")
