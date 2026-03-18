@@ -16,10 +16,10 @@ import requests
 import datetime
 import random
 
-# ===== ここに OpenWeatherMap の API キーを貼る =====
+# ===== OpenWeatherMap APIキー =====
 OWM_API_KEY = "75752756f94430194a9f26ef4e0518db"
 
-# 競艇場ごとの緯度・経度
+# 競艇場の緯度・経度
 BOAT_LATLON = {
     "桐生":   {"lat": 36.4028, "lon": 139.3344},
     "戸田":   {"lat": 35.8153, "lon": 139.6425},
@@ -47,35 +47,16 @@ BOAT_LATLON = {
     "大村":   {"lat": 32.9311, "lon": 129.9531},
 }
 
-# ホームストレッチの向き（度数：0=北,90=東,180=南,270=西）
+# ホームストレッチの向き（度数）
 COURSE_HEADING = {
-    "桐生": 180,
-    "戸田": 0,
-    "江戸川": 180,
-    "平和島": 0,
-    "多摩川": 0,
-    "浜名湖": 180,
-    "蒲郡": 180,
-    "常滑": 0,
-    "津": 0,
-    "三国": 180,
-    "びわこ": 0,
-    "住之江": 45,   # 北東向き（概ね）
-    "尼崎": 0,
-    "鳴門": 180,
-    "丸亀": 180,
-    "児島": 0,
-    "宮島": 180,
-    "徳山": 225,   # 南西向き
-    "下関": 0,
-    "若松": 180,
-    "芦屋": 0,
-    "福岡": 180,
-    "唐津": 0,
-    "大村": 180,
+    "桐生": 180, "戸田": 0, "江戸川": 180, "平和島": 0, "多摩川": 0,
+    "浜名湖": 180, "蒲郡": 180, "常滑": 0, "津": 0, "三国": 180,
+    "びわこ": 0, "住之江": 45, "尼崎": 0, "鳴門": 180, "丸亀": 180,
+    "児島": 0, "宮島": 180, "徳山": 225, "下関": 0, "若松": 180,
+    "芦屋": 0, "福岡": 180, "唐津": 0, "大村": 180,
 }
 
-# 競艇場データ（例：丸亀のみ）
+# 競艇場データ（例）
 COURSE_DATA = {
     "丸亀": {
         "1コース1着率": 55,
@@ -91,35 +72,27 @@ COURSE_DATA = {
     }
 }
 
-RACER_DATA = {}
-MOTOR_DATA = {}
-
-# ===== 気象キャッシュ（B案：7時以降の最初の予想時に全場まとめて取得） =====
+# ===== 気象キャッシュ =====
 DAILY_WEATHER = {}          # { "丸亀": {"deg": 180, "speed": 3.5, "desc": "晴れ"} }
 LAST_WEATHER_DAY = None     # 「気象の日付」（7時またぎ対応）
 
-def _weather_day(now: datetime.datetime):
-    """7時を境に『気象の日付』を決める。
-       7時前 → 前日扱い / 7時以降 → 当日扱い
-    """
+def _weather_day(now):
+    """7時を境に気象日を決定"""
     if now.hour >= 7:
         return now.date()
     else:
-        return (now.date() - datetime.timedelta(days=1))
+        return now.date() - datetime.timedelta(days=1)
 
 def fetch_weather(place):
-    """単一場の現在気象を OpenWeatherMap から取得"""
+    """単一場の現在気象を取得"""
     info = BOAT_LATLON.get(place)
-    if info is None or not OWM_API_KEY:
+    if info is None:
         return None, None, None
-
-    lat = info["lat"]
-    lon = info["lon"]
 
     url = "https://api.openweathermap.org/data/2.5/weather"
     params = {
-        "lat": lat,
-        "lon": lon,
+        "lat": info["lat"],
+        "lon": info["lon"],
         "appid": OWM_API_KEY,
         "units": "metric",
         "lang": "ja"
@@ -129,47 +102,40 @@ def fetch_weather(place):
         res = requests.get(url, params=params, timeout=5)
         data = res.json()
         wind = data.get("wind", {})
-        wind_speed = wind.get("speed")  # m/s
-        wind_deg = wind.get("deg")      # 0〜360°
-        weather_desc = None
-        if data.get("weather"):
-            weather_desc = data["weather"][0].get("description")
-        return wind_deg, wind_speed, weather_desc
+        wind_speed = wind.get("speed")
+        wind_deg = wind.get("deg")
+        desc = data["weather"][0]["description"] if data.get("weather") else None
+        return wind_deg, wind_speed, desc
     except:
         return None, None, None
 
-def update_all_weather_if_needed():
-    """7時以降の最初の予想時に、全場の気象をまとめて取得してキャッシュ"""
+def get_weather(place):
+    """必要な場だけ気象を取得し、7時以降は更新"""
     global DAILY_WEATHER, LAST_WEATHER_DAY
 
     now = datetime.datetime.now()
     today_weather_day = _weather_day(now)
 
-    # 初回 or 気象日が変わったら全場更新
-    if LAST_WEATHER_DAY != today_weather_day and now.hour >= 7:
+    # 日付が変わったらキャッシュリセット
+    if LAST_WEATHER_DAY != today_weather_day:
         DAILY_WEATHER = {}
-        for place in BOAT_LATLON.keys():
-            deg, speed, desc = fetch_weather(place)
-            DAILY_WEATHER[place] = {
-                "deg": deg,
-                "speed": speed,
-                "desc": desc
-            }
         LAST_WEATHER_DAY = today_weather_day
 
-def get_weather(place):
-    """キャッシュされた気象を返す（必要なら全場更新）"""
-    update_all_weather_if_needed()
-    w = DAILY_WEATHER.get(place)
-    if not w:
-        return None, None, None
+    # まだ取得していない場なら取得
+    if place not in DAILY_WEATHER:
+        deg, speed, desc = fetch_weather(place)
+        DAILY_WEATHER[place] = {
+            "deg": deg,
+            "speed": speed,
+            "desc": desc
+        }
+
+    w = DAILY_WEATHER[place]
     return w["deg"], w["speed"], w["desc"]
 
-# ===== ここから風向判定・スコア計算など =====
-
+# ===== 風向判定 =====
 def normalize_angle_diff(a, b):
-    diff = (a - b + 180) % 360 - 180
-    return diff
+    return (a - b + 180) % 360 - 180
 
 def classify_relative_wind(place, wind_deg):
     if wind_deg is None:
@@ -189,24 +155,20 @@ def classify_relative_wind(place, wind_deg):
         return "向かい風"
 
     rel = normalize_angle_diff(wind_deg, heading)
-    if 0 < rel < 180:
-        return "右横風"
-    else:
-        return "左横風"
+    return "右横風" if 0 < rel < 180 else "左横風"
 
+# ===== モックデータ =====
 def get_mock_race_data():
-    data = []
-    for i in range(1, 7):
-        data.append({
-            "艇番": i,
-            "全国勝率": round(random.uniform(4.0, 7.5), 2),
-            "当地勝率": round(random.uniform(4.0, 7.5), 2),
-            "モーター": random.randint(20, 80),
-            "ボート": random.randint(20, 80),
-            "ST": round(random.uniform(0.10, 0.20), 2)
-        })
-    return data
+    return [{
+        "艇番": i,
+        "全国勝率": round(random.uniform(4.0, 7.5), 2),
+        "当地勝率": round(random.uniform(4.0, 7.5), 2),
+        "モーター": random.randint(20, 80),
+        "ボート": random.randint(20, 80),
+        "ST": round(random.uniform(0.10, 0.20), 2)
+    } for i in range(1, 7)]
 
+# ===== スコア計算 =====
 def calculate_score(racer, place, wind_type, wind_speed):
     score = (
         racer["全国勝率"] * 8 +
@@ -220,26 +182,26 @@ def calculate_score(racer, place, wind_type, wind_speed):
         score += (wind_speed or 0) * 1.5
     elif wind_type == "向かい風":
         score -= (wind_speed or 0) * 1.2
-    elif wind_type in ["右横風", "左横風"]:
+    else:
         score -= (wind_speed or 0) * 0.5
 
     course = COURSE_DATA.get(place)
     if course:
         lane = racer["艇番"]
         if lane == 1:
-            score += course.get("1コース1着率", 0) * 0.3
+            score += course["1コース1着率"] * 0.3
         if lane == 2:
-            score += course.get("2コース差し率", 0) * 0.2
+            score += course["2コース差し率"] * 0.2
         if lane == 3:
-            score += course.get("3コースまくり率", 0) * 0.2
+            score += course["3コースまくり率"] * 0.2
         if lane == 4:
-            score += course.get("4コースまくり差し率", 0) * 0.2
+            score += course["4コースまくり差し率"] * 0.2
 
-        wind_adj = course.get("風向き補正", {}).get(wind_type, {})
-        score += wind_adj.get(str(lane), 0)
+        score += course["風向き補正"].get(wind_type, {}).get(str(lane), 0)
 
     return score
 
+# ===== 予想メイン =====
 def get_prediction(race_name):
     place = race_name[:2]
     today = datetime.datetime.now().strftime("%Y/%m/%d")
@@ -248,26 +210,17 @@ def get_prediction(race_name):
     wind_type = classify_relative_wind(place, wind_deg)
 
     racers = get_mock_race_data()
-    internal_scores = []
-    for r in racers:
-        s = calculate_score(r, place, wind_type, wind_speed)
-        internal_scores.append({"艇番": r["艇番"], "スコア": s})
-
-    sorted_scores = sorted(internal_scores, key=lambda x: x["スコア"], reverse=True)
-    top3 = sorted_scores[:3]
-
-    wind_speed_display = wind_speed if wind_speed is not None else "不明"
-    wind_deg_display = wind_deg if wind_deg is not None else "不明"
-    weather_display = weather_desc if weather_desc is not None else "不明"
+    scores = [{"艇番": r["艇番"], "スコア": calculate_score(r, place, wind_type, wind_speed)} for r in racers]
+    top3 = sorted(scores, key=lambda x: x["スコア"], reverse=True)[:3]
 
     text = f"""
 📅 {today}
 🏁【{race_name}】
 
-【気象（OpenWeather 現在値・1日固定）】
-天気：{weather_display}
-風向：{wind_type}（方位：{wind_deg_display}°）
-風速：{wind_speed_display}m/s
+【気象（1日固定）】
+天気：{weather_desc}
+風向：{wind_type}（{wind_deg}°）
+風速：{wind_speed}m/s
 
 【スコア順位】
 1位：{top3[0]["艇番"]}号艇
@@ -280,39 +233,13 @@ def get_prediction(race_name):
 
     text += f"""
 
-【本命 3連単 1点】
+【本命 3連単】
 {first}-{second}-{third}（確信度：{confidence}）
 
-【中穴 3連単 1点】
+【中穴】
 {second}-{first}-{third}
 """
 
     return text
 
 BOAT_RACES = list(BOAT_LATLON.keys())
-
-
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    user_text = event.message.text
-
-    for place in BOAT_RACES:
-        if place + "全レース" in user_text:
-            predictions = []
-            for r in range(1, 13):
-                predictions.append(get_prediction(f"{place}{r}R"))
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage("\n\n".join(predictions))
-            )
-            return
-
-    for place in BOAT_RACES:
-        if place in user_text and "R" in user_text:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(get_prediction(user_text))
-            )
-            return
-
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(user_text))
