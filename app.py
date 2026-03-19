@@ -1,4 +1,4 @@
-from flask import Flask, from flask import Flask, request, abort, redirect
+from flask import Flask, request, abort, redirect, session
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
@@ -10,6 +10,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 app = Flask(__name__)
+app.secret_key = "super-secret-key"  # セッション用（任意の文字列でOK）
 
 # ===== LINE =====
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -44,26 +45,35 @@ def get_credentials():
     return None
 
 
+# ===== 認証開始 =====
 @app.route("/authorize")
 def authorize():
-    """OAuth 認証開始"""
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI
     )
-    auth_url, _ = flow.authorization_url(prompt="consent")
+
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent"
+    )
+
+    session["state"] = state
+    session["flow"] = flow
+
     return redirect(auth_url)
 
 
+# ===== 認証完了 =====
 @app.route("/callback")
 def callback():
-    """OAuth 認証完了 → token.pickle 保存"""
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRETS_FILE,
-        scopes=SCOPES,
-        redirect_uri=REDIRECT_URI
-    )
+    flow = session.get("flow")
+    if not flow:
+        return "Flow が見つかりません。もう一度 /authorize から開始してください。"
+
+    flow.redirect_uri = REDIRECT_URI
     flow.fetch_token(authorization_response=request.url)
 
     creds = flow.credentials
@@ -73,6 +83,7 @@ def callback():
     return "Google Sheets 認証が完了しました！"
 
 
+# ===== LINE Webhook =====
 @app.route("/webhook", methods=["POST"])
 def webhook():
     signature = request.headers["X-Line-Signature"]
@@ -86,6 +97,7 @@ def webhook():
     return "OK"
 
 
+# ===== メッセージ処理 =====
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_text = event.message.text
