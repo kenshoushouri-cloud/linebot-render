@@ -19,7 +19,7 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ===== OAuth =====
-CLIENT_SECRETS_FILE = "client_secret_1592460xxxx.json"   # Render にアップロードする
+CLIENT_SECRETS_FILE = "client_secret_159246054178-t7fqvkn6kac7agf3n8j2jtad79dfvgu7.apps.googleusercontent.com.json"   # Render にアップロードする
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 REDIRECT_URI = "https://linebot-render-yfj4.onrender.com/callback"  # 後で書き換える
 
