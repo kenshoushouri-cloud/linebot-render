@@ -1,4 +1,4 @@
-from flask import Flask, request, abort, redirect
+from flask import Flask, from flask import Flask, request, abort, redirect
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
@@ -94,13 +94,19 @@ def handle_message(event):
     if not creds:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="Google 認証が必要です。\n以下をタップしてください：\https://linebot-render-yfj4.onrender.com")
+            TextSendMessage(
+                text=(
+                    "Google 認証が必要です。\n"
+                    "以下をタップしてください：\n"
+                    "https://linebot-render-yfj4.onrender.com/authorize"
+                )
+            )
         )
         return
 
     # ===== Sheets に書き込み =====
     service = build("sheets", "v4", credentials=creds)
-    sheet_id = "1-DXbAAyhKS2ZRrDVGN-FBp4_b4LkXmm22AqxHBdQFIQ"  # ←ここを書き換える
+    sheet_id = "1-DXbAAyhKS2ZRrDVGN-FBp4_b4LkXmm22AqxHBdQFIQ"  # 必要なら変更
 
     values = [[user_text]]
     body = {"values": values}
