@@ -1,4 +1,4 @@
-from flask import Flask, request, abort, redirect, session
+from flask import Flask, request, abort, redirect
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
@@ -10,7 +10,6 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 app = Flask(__name__)
-app.secret_key = "super-secret-key"  # セッション用（任意の文字列でOK）
 
 # ===== LINE =====
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -54,14 +53,16 @@ def authorize():
         redirect_uri=REDIRECT_URI
     )
 
-    auth_url, state = flow.authorization_url(
+    auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
-        prompt="consent"
+        prompt="consent",
+        code_challenge_method="S256"
     )
 
-    session["state"] = state
-    session["flow"] = flow
+    # code_verifier をファイルに保存（Render でも消えない）
+    with open("code_verifier.txt", "w") as f:
+        f.write(flow.code_verifier)
 
     return redirect(auth_url)
 
@@ -69,11 +70,20 @@ def authorize():
 # ===== 認証完了 =====
 @app.route("/callback")
 def callback():
-    flow = session.get("flow")
-    if not flow:
-        return "Flow が見つかりません。もう一度 /authorize から開始してください。"
+    # 保存しておいた code_verifier を読み込む
+    if not os.path.exists("code_verifier.txt"):
+        return "code_verifier が見つかりません。もう一度 /authorize から開始してください。"
 
-    flow.redirect_uri = REDIRECT_URI
+    with open("code_verifier.txt", "r") as f:
+        code_verifier = f.read().strip()
+
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
+        scopes=SCOPES,
+        redirect_uri=REDIRECT_URI,
+        code_verifier=code_verifier
+    )
+
     flow.fetch_token(authorization_response=request.url)
 
     creds = flow.credentials
@@ -138,3 +148,4 @@ def handle_message(event):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
