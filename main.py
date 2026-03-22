@@ -1,79 +1,169 @@
-from flask import Flask, request, jsonify
-import requests
-import os
+# ============================================
+#  A5型複合スコア算出（あなたのロジック）
+# ============================================
+def calc_scores(race):
+    scores = {}
 
-app = Flask(__name__)
+    for boat in race.boats:
+        base = boat.motor_score + boat.tenji_score + boat.player_score
+        base += race.weather_bonus(boat.number)
+        base += race.trend_bonus(boat.number)
+        scores[boat.number] = base
 
-# --- 環境変数からキーを取得（GitHub には書かない） ---
-AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
-AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
-AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME")
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+    return scores
 
-# --- Airtable 保存 ---
-def save_to_airtable(race_id, prediction):
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
+
+# ============================================
+#  場ごとの鉄板・買い基準（自動調整）
+# ============================================
+def get_teppan_threshold(place):
+    strong_in = ["徳山", "芦屋", "下関", "大村"]
+    weak_in = ["戸田", "江戸川", "平和島"]
+
+    if place in strong_in:
+        return 70
+    if place in weak_in:
+        return 80
+    return 75
+
+
+def get_buy_threshold(place):
+    strong_in = ["徳山", "芦屋", "下関", "大村"]
+    weak_in = ["戸田", "江戸川", "平和島"]
+
+    if place in strong_in:
+        return 60
+    if place in weak_in:
+        return 70
+    return 65
+
+
+# ============================================
+#  穴の最適パターン選択
+# ============================================
+def select_best_hole_pattern(b1, b2, b3, scores):
+    # 5号艇の位置ごとにスコアを評価
+    patterns = {
+        f"5-{b1}-{b2}": scores[5] + 15,  # 5頭
+        f"{b1}-5-{b2}": scores[5] + 10,  # 2着
+        f"{b1}-{b2}-5": scores[5] + 5,   # 3着
     }
-    data = {
-        "records": [
-            {
-                "fields": {
-                    "race_id": race_id,
-                    "prediction": prediction
-                }
-            }
-        ]
+    return max(patterns, key=patterns.get)
+
+
+# ============================================
+#  predict()（レース単体予想）
+# ============================================
+def predict(race):
+
+    # STEP1：スコア算出
+    scores = calc_scores(race)
+    sorted_boats = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+    b1, s1 = sorted_boats[0]
+    b2, s2 = sorted_boats[1]
+    b3, s3 = sorted_boats[2]
+
+    # STEP2：2点固定
+    pick1 = f"{b1}-{b2}-{b3}"
+    pick2 = f"{b2}-{b1}-{b3}"
+
+    # STEP3：分類
+    teppan_th = get_teppan_threshold(race.place)
+    buy_th = get_buy_threshold(race.place)
+
+    label1 = "鉄板" if s1 >= teppan_th else "スルー"
+    label2 = "買い" if s2 >= buy_th else "スルー"
+
+    # STEP4：穴判定
+    hole_score = scores.get(5, 0)
+
+    if race.is_4kado_attack: hole_score += 20
+    if race.wind_dir == "向かい風": hole_score += 10
+    if race.water_condition == "荒れ": hole_score += 10
+    if race.motor_eval[5] == "良い": hole_score += 10
+    if race.tenji_eval[5] == "良い": hole_score += 10
+    if race.trend == "まくりデー": hole_score += 15
+
+    hole = None
+    if hole_score >= 70:
+        hole = select_best_hole_pattern(b1, b2, b3, scores)
+
+    # STEP5：出力整形
+    teppan_out = pick1 if label1 == "鉄板" else None
+    kai_out = pick2 if label2 == "買い" else None
+
+    suru_list = []
+    if label1 == "スルー":
+        suru_list.append(pick1)
+    if label2 == "スルー":
+        suru_list.append(pick2)
+    suru_out = suru_list if suru_list else None
+
+    return {
+        "teppan": teppan_out,
+        "kai": kai_out,
+        "suru": suru_out,
+        "ana": hole
     }
-    response = requests.post(url, json=data, headers=headers)
-    return response.status_code == 200 or response.status_code == 201
 
-# --- LINE 返信 ---
-def reply_to_line(reply_token, message):
-    url = "https://api.line.me/v2/bot/message/reply"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
-    }
-    body = {
-        "replyToken": reply_token,
-        "messages": [{"type": "text", "text": message}]
-    }
-    requests.post(url, json=body, headers=headers)
 
-# --- 予想ロジック（仮） ---
-def predict(race_id):
-    # ここにあなたの予想ロジックを入れる
-    return f"レース {race_id} の予想結果：1-2-3"
+# ============================================
+#  predict_all()（全レース → 買うべきレース一覧）
+# ============================================
+def predict_all(races):
 
-# --- Webhook 受信 ---
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    body = request.json
+    results = []
+    summary = []
 
-    try:
-        event = body["events"][0]
-        reply_token = event["replyToken"]
-        user_message = event["message"]["text"]
+    for race in races:
+        pred = predict(race)
 
-        race_id = user_message.strip()
-        prediction = predict(race_id)
+        race_output = {
+            "race_name": race.place,
+            "race_number": race.number,
+            "teppan": pred["teppan"],
+            "kai": pred["kai"],
+            "suru": pred["suru"],
+            "ana": pred["ana"]
+        }
 
-        save_to_airtable(race_id, prediction)
-        reply_to_line(reply_token, prediction)
+        results.append(race_output)
 
-    except Exception as e:
-        print("Error:", e)
+        # 買うべきレースだけ抽出
+        if pred["teppan"] or pred["kai"] or pred["ana"]:
+            summary.append(race_output)
 
-    return "OK"
+    # レース番号順
+    summary = sorted(summary, key=lambda x: x["race_number"])
 
-# --- Render 用ポート設定 ---
-@app.route("/")
-def home():
-    return "Bot is running."
+    return results, summary
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+
+# ============================================
+#  まとめ表示（文章生成）
+# ============================================
+def format_summary(summary):
+
+    if len(summary) == 0:
+        return "【本日買うべきレースはありません】"
+
+    lines = []
+    lines.append("【本日買うべきレース一覧】\n")
+
+    for r in summary:
+
+        lines.append(f"{r['race_name']} {r['race_number']}R")
+
+        if r["teppan"]:
+            lines.append(f"鉄板：{r['teppan']}")
+
+        if r["kai"]:
+            lines.append(f"買い：{r['kai']}")
+
+        if r["ana"]:
+            lines.append(f"穴：{r['ana']}")
+
+        lines.append("")
+
+    return "\n".join(lines)
