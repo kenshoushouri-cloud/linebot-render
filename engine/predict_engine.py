@@ -1,3 +1,5 @@
+from datetime import date
+
 from .scoring import (
     calc_scores,
     get_teppan_threshold,
@@ -8,7 +10,7 @@ from .scoring import (
 
 
 def predict(race):
-
+    # スコア計算
     scores = calc_scores(race)
     sorted_boats = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
@@ -85,7 +87,8 @@ def predict(race):
         "teppan": teppan_out,
         "kai": kai_out,
         "suru": suru_out,
-        "ana": hole
+        "ana": hole,
+        "scores": scores,  # ★ スコアを後で詳細表示・学習用に保持
     }
 
 
@@ -101,7 +104,8 @@ def predict_all(races):
             "teppan": pred["teppan"],
             "kai": pred["kai"],
             "suru": pred["suru"],
-            "ana": pred["ana"]
+            "ana": pred["ana"],
+            "scores": pred["scores"],  # ★ 各レースのスコアも保持
         }
         results.append(race_output)
 
@@ -127,6 +131,7 @@ def format_summary(summary):
             lines.append(f"穴：{r['ana']}")
         lines.append("")
     return "\n".join(lines)
+
 
 def format_full_output(results, summary):
     lines = ["【全レース詳細】\n"]
@@ -162,3 +167,43 @@ def format_full_output(results, summary):
 
     return "\n".join(lines)
 
+
+def format_detailed_output(race, pred, scores):
+    """1レース分を、あなたの理想フォーマットで整形する関数"""
+    today = date.today().strftime("%Y/%m/%d")
+
+    # スコア順位（上位3艇）
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    b1, s1 = sorted_scores[0]
+    b2, s2 = sorted_scores[1]
+    b3, s3 = sorted_scores[2]
+
+    rank1 = f"{b1}号艇（{s1}）"
+    rank2 = f"{b2}号艇（{s2}）"
+    rank3 = f"{b3}号艇（{s3}）"
+
+    lines = []
+
+    lines.append(f"📅 {today}")
+    lines.append(f"🏁【{race.place}{race.number}R】\n")
+
+    # 気象（1日固定想定）
+    lines.append("【気象（1日固定）】")
+    lines.append(f"天気：{race.weather}")
+    lines.append(f"風向：{race.wind_dir}")
+    lines.append(f"風速：{race.wind_power}m/s\n")
+
+    # スコア順位
+    lines.append("【スコア順位】")
+    lines.append(f"1位：{rank1}")
+    lines.append(f"2位：{rank2}")
+    lines.append(f"3位：{rank3}\n")
+
+    # 買い目
+    lines.append("【買い目】")
+    lines.append(f"鉄板：{pred['teppan'] or 'なし'}")
+    lines.append(f"買い：{pred['kai'] or 'なし'}")
+    lines.append(f"スルー：{', '.join(pred['suru']) if pred['suru'] else 'なし'}")
+    lines.append(f"穴：{pred['ana'] or 'なし'}")
+
+    return "\n".join(lines)
