@@ -34,6 +34,7 @@ class Race:
         place,
         number,
         boats,
+        weather,            # ★ 追加
         wind_dir,
         wind_power,
         water_condition,
@@ -43,6 +44,7 @@ class Race:
         self.place = place
         self.number = number
         self.boats = boats
+        self.weather = weather            # ★ 追加
         self.wind_dir = wind_dir
         self.wind_power = wind_power
         self.water_condition = water_condition
