@@ -127,3 +127,38 @@ def format_summary(summary):
             lines.append(f"穴：{r['ana']}")
         lines.append("")
     return "\n".join(lines)
+
+def format_full_output(results, summary):
+    lines = ["【全レース詳細】\n"]
+
+    for r in results:
+        lines.append(f"{r['race_name']} {r['race_number']}R")
+
+        if r["teppan"]:
+            lines.append(f"鉄板：{r['teppan']}")
+        if r["kai"]:
+            lines.append(f"買い：{r['kai']}")
+        if r["suru"]:
+            lines.append(f"スルー：{', '.join(r['suru'])}")
+        if r["ana"]:
+            lines.append(f"穴：{r['ana']}")
+
+        lines.append("")
+
+    # 最後に買うべきレース一覧
+    lines.append("【買うべきレース一覧】\n")
+    if len(summary) == 0:
+        lines.append("本日買うべきレースはありません")
+    else:
+        for r in summary:
+            lines.append(f"{r['race_name']} {r['race_number']}R")
+            if r["teppan"]:
+                lines.append(f"鉄板：{r['teppan']}")
+            if r["kai"]:
+                lines.append(f"買い：{r['kai']}")
+            if r["ana"]:
+                lines.append(f"穴：{r['ana']}")
+            lines.append("")
+
+    return "\n".join(lines)
+
