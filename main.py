@@ -1,57 +1,18 @@
-import os
+from flask import Flask, request, jsonify
 import requests
-from flask import Flask, request, abort
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
-
-# ====== あなたの Airtable 情報 ======
-AIRTABLE_API_KEY = "YOUR_API_KEY"  # ← pat から始まるキーをここに貼る
-BASE_ID = "appK7g1LhorYnNLwg"
-TABLE_NAME = "race"
-
-# ====== LINE Bot 情報 ======
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+import os
 
 app = Flask(__name__)
 
-# ====== 気象データ取得（仮のAPI：住之江・丸亀などの天気を返す） ======
-def get_weather(place):
-    # 実際の天気APIに置き換え可能
-    dummy_weather = {
-        "住之江": {"wind": 3, "wave": 0.5},
-        "丸亀": {"wind": 2, "wave": 0.3},
-        "唐津": {"wind": 4, "wave": 0.7},
-        "大村": {"wind": 1, "wave": 0.2},
-    }
-    return dummy_weather.get(place, {"wind": 2, "wave": 0.3})
+# --- 環境変数からキーを取得（GitHub には書かない） ---
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 
-# ====== 予想ロジック（簡易版） ======
-def predict_boatrace(place, race_no):
-    weather = get_weather(place)
-    wind = weather["wind"]
-    wave = weather["wave"]
-
-    # シンプル予想ロジック
-    if wind <= 2:
-        prediction = "1-3"
-        confidence = "A"
-    elif wind <= 4:
-        prediction = "1-4"
-        confidence = "B"
-    else:
-        prediction = "3-5"
-        confidence = "C"
-
-    return prediction, confidence, weather
-
-# ====== Airtable 保存 ======
-def save_to_airtable(date, place, race_no, prediction, race_id, result=""):
-    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+# --- Airtable 保存 ---
+def save_to_airtable(race_id, prediction):
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json"
@@ -60,70 +21,59 @@ def save_to_airtable(date, place, race_no, prediction, race_id, result=""):
         "records": [
             {
                 "fields": {
-                    "A date": date,
-                    "A stadium": place,
-                    "# race_no": race_no,
-                    "🧠 prediction": prediction,
-                    "🧠 race_id": race_id,
-                    "🧠 result": result
+                    "race_id": race_id,
+                    "prediction": prediction
                 }
             }
         ]
     }
-    requests.post(url, json=data, headers=headers)
+    response = requests.post(url, json=data, headers=headers)
+    return response.status_code == 200 or response.status_code == 201
 
-# ====== LINE Webhook ======
-@app.route("/callback", methods=["POST"])
-def callback():
-    signature = request.headers["X-Line-Signature"]
-    body = request.get_data(as_text=True)
+# --- LINE 返信 ---
+def reply_to_line(reply_token, message):
+    url = "https://api.line.me/v2/bot/message/reply"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+    }
+    body = {
+        "replyToken": reply_token,
+        "messages": [{"type": "text", "text": message}]
+    }
+    requests.post(url, json=body, headers=headers)
+
+# --- 予想ロジック（仮） ---
+def predict(race_id):
+    # ここにあなたの予想ロジックを入れる
+    return f"レース {race_id} の予想結果：1-2-3"
+
+# --- Webhook 受信 ---
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    body = request.json
 
     try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
+        event = body["events"][0]
+        reply_token = event["replyToken"]
+        user_message = event["message"]["text"]
+
+        race_id = user_message.strip()
+        prediction = predict(race_id)
+
+        save_to_airtable(race_id, prediction)
+        reply_to_line(reply_token, prediction)
+
+    except Exception as e:
+        print("Error:", e)
 
     return "OK"
 
-# ====== メッセージ受信 ======
-@handler.add(MessageEvent, MessageEvent.message_type == TextMessage)
-def handle_message(event):
-    text = event.message.text
-
-    # 例：住之江5R
-    place = text[:2]
-    race_no = text[-2:].replace("R", "")
-
-    # 日付（今日）
-    from datetime import datetime
-    date = datetime.now().strftime("%Y-%m-%d")
-
-    # race_id
-    race_id = f"{date}-{place}-{race_no}"
-
-    # 予想
-    prediction, confidence, weather = predict_boatrace(place, race_no)
-
-    # Airtable 保存
-    save_to_airtable(date, place, race_no, prediction, race_id)
-
-    # 返信
-    reply = (
-        f"🏁 *競艇予想*\n"
-        f"【{place}{race_no}R】\n\n"
-        f"🎯 予想：{prediction}\n"
-        f"📊 信頼度：{confidence}\n\n"
-        f"🌤 天気\n"
-        f"風：{weather['wind']}m\n"
-        f"波：{weather['wave']}m\n\n"
-        f"🧠 race_id：{race_id}\n"
-        f"（Airtable に保存しました）"
-    )
-
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=reply)
-    )
+# --- Render 用ポート設定 ---
+@app.route("/")
+def home():
+    return "Bot is running."
 
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
