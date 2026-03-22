@@ -35,19 +35,25 @@ def webhook():
 
 # ★ メッセージ受信時の処理
 @handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_text = event.message.text.strip()
 
-    # 「予想」と送られたら予想エンジンを実行
     if user_text == "予想":
-        result = predict_all()
+        # ★ 今日のレース一覧を取得（あなたの関数名に合わせて修正）
+        races = load_today_races()
+
+        # ★ races を predict_all に渡す
+        result = predict_all(races)
+
         summary = format_summary(result)
+
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=summary)
         )
     else:
-        # その他のメッセージには説明を返す
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="「予想」と送ると本日の買うべきレースを表示します。")
