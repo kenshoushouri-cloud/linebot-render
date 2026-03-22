@@ -1,18 +1,17 @@
 from flask import Flask, request, abort
-from engine.predict_engine import predict_all, format_summary
-from data_loader import load_today_races  # ★ ルート直下の data_loader.py を読む
 
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
-import os
+from engine.predict_engine import predict_all, format_full_output
+from data_loader import load_today_races  # ルート直下の data_loader.py を読み込む
 
 app = Flask(__name__)
 
-# ★ あなたのチャネルシークレットとアクセストークンをここに入れる
-CHANNEL_SECRET = "a550cf4c2a8c3d2342efa2be2415b017"
-CHANNEL_ACCESS_TOKEN = "My0MUGnag0QWdWeC6PdIBOxD+Xe0u/nU/CjH9qSzfui4pfZcML1H3RaUUHyyIx+XwEM+FKrzxSLPfB/CT2Mu9r6j3+OQ7dW3s14JzS2cnob2LrLlQ8ZVzVOY6XLo2eeseYwzPorkAEKvrgaRtLq7+AdB04t89/1O/w1cDnyilFU="
+# ★ あなたの LINE チャネル情報をここに入れる
+CHANNEL_SECRET = "あなたのチャネルシークレット"
+CHANNEL_ACCESS_TOKEN = "あなたのアクセストークン"
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
@@ -44,15 +43,15 @@ def handle_message(event):
         # ★ 今日のレース一覧を取得
         races = load_today_races()
 
-        # ★ predict_all は (results, summary) を返す
+        # ★ 全レース結果と買うべきレース一覧を取得
         results, summary = predict_all(races)
 
-        # ★ summary を LINE 用テキストに整形
-        summary_text = format_summary(summary)
+        # ★ 詳細 → 一覧 の順で整形
+        output_text = format_full_output(results, summary)
 
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=summary_text)
+            TextSendMessage(text=output_text)
         )
     else:
         line_bot_api.reply_message(
