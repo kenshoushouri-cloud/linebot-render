@@ -1,31 +1,92 @@
 def calc_stats(records):
-    """
-    records: Airtable から取得した検証データのリスト
-    例：
-    [
-        {"main_hit": True, "ev_main": 1.12, "ev_ana": None},
-        {"main_hit": False, "ana_hit": True, "ev_ana": 2.45},
-        ...
-    ]
-    """
+    total_races = len(records)
 
-    total = len(records)
-    main_hits = sum(1 for r in records if r["main_hit"])
-    ana_hits = sum(1 for r in records if r["ana_hit"])
+    total_bet = 0
+    total_return = 0
 
-    # 回収率（EVベース）
-    total_ev = 0
+    main_hits = 0
+    ana_hits = 0
+
+    main_bet_count = 0
+    ana_bet_count = 0
+
+    # EV分析用
+    ev_main_list = []
+    ev_ana_list = []
+
+    # EVギャップ分析用（改善点）
+    ev_gap_main_list = []
+    ev_gap_ana_list = []
+
     for r in records:
-        if r["main_hit"] and r["ev_main"]:
-            total_ev += r["ev_main"]
-        if r["ana_hit"] and r["ev_ana"]:
-            total_ev += r["ev_ana"]
+        # ===== 本線 =====
+        if r["bet_main"]:
+            total_bet += 100
+            main_bet_count += 1
+
+            if r["main_hit"]:
+                main_hits += 1
+                total_return += r["odds_main"] * 100
+
+            if r["ev_main"]:
+                ev_main_list.append(r["ev_main"])
+
+            if r["ev_gap_main"] is not None:
+                ev_gap_main_list.append(r["ev_gap_main"])
+
+        # ===== 穴 =====
+        if r["bet_ana"]:
+            total_bet += 100
+            ana_bet_count += 1
+
+            if r["ana_hit"]:
+                ana_hits += 1
+                total_return += r["odds_ana"] * 100
+
+            if r["ev_ana"]:
+                ev_ana_list.append(r["ev_ana"])
+
+            if r["ev_gap_ana"] is not None:
+                ev_gap_ana_list.append(r["ev_gap_ana"])
+
+    # ===== 回収率 =====
+    roi = total_return / total_bet if total_bet else 0
+
+    # ===== 的中率 =====
+    hit_rate_main = main_hits / main_bet_count if main_bet_count else 0
+    hit_rate_ana = ana_hits / ana_bet_count if ana_bet_count else 0
+
+    # ===== EV平均 =====
+    avg_ev_main = sum(ev_main_list) / len(ev_main_list) if ev_main_list else 0
+    avg_ev_ana = sum(ev_ana_list) / len(ev_ana_list) if ev_ana_list else 0
+
+    # ===== EVギャップ平均（改善点） =====
+    avg_ev_gap_main = sum(ev_gap_main_list) / len(ev_gap_main_list) if ev_gap_main_list else 0
+    avg_ev_gap_ana = sum(ev_gap_ana_list) / len(ev_gap_ana_list) if ev_gap_ana_list else 0
 
     return {
-        "total": total,
+        "total_races": total_races,
+
+        # 投資・回収
+        "total_bet": total_bet,
+        "total_return": total_return,
+        "roi": round(roi, 3),
+
+        # 的中
         "main_hits": main_hits,
         "ana_hits": ana_hits,
-        "hit_rate_main": main_hits / total if total else 0,
-        "hit_rate_ana": ana_hits / total if total else 0,
-        "ev_return": total_ev / total if total else 0
+        "hit_rate_main": round(hit_rate_main, 3),
+        "hit_rate_ana": round(hit_rate_ana, 3),
+
+        # EV分析
+        "avg_ev_main": round(avg_ev_main, 3),
+        "avg_ev_ana": round(avg_ev_ana, 3),
+
+        # EVギャップ分析（改善点）
+        "avg_ev_gap_main": round(avg_ev_gap_main, 3),
+        "avg_ev_gap_ana": round(avg_ev_gap_ana, 3),
+
+        # 参考
+        "main_bet_count": main_bet_count,
+        "ana_bet_count": ana_bet_count
     }
