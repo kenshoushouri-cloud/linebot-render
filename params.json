@@ -1,0 +1,27 @@
+{
+  "main_th_base": 70,
+  "ana_th_base": 1.2,
+
+  "place_adj": {
+    "大村":  {"main_adj": -5, "ana_adj": 10},
+    "徳山":  {"main_adj": -3, "ana_adj": 5},
+    "芦屋":  {"main_adj": -2, "ana_adj": 5},
+    "唐津":  {"main_adj": -1, "ana_adj": 7},
+    "平和島": {"main_adj": 5,  "ana_adj": -10},
+    "江戸川": {"main_adj": 8,  "ana_adj": -15}
+  },
+
+  "hole_adj": {
+    "base": 15,
+    "wind": 10,
+    "water": 10,
+    "trend": 10,
+    "motor": 10
+  },
+
+  "outer_multiplier": {
+    "4": 1.1,
+    "5": 1.2,
+    "6": 0.9
+  }
+}
