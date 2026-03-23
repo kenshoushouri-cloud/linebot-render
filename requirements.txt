@@ -1,7 +1,7 @@
 flask
 gunicorn
 line-bot-sdk
-airtable-python-wrapper
+pyairtable
 requests
 python-dotenv
 
