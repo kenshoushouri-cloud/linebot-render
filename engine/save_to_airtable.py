@@ -1,11 +1,10 @@
 import requests
 import json
-from datetime import date
 
 # ===== Airtable 設定 =====
 AIRTABLE_API_KEY = "YOUR_API_KEY"
 AIRTABLE_BASE_ID = "YOUR_BASE_ID"
-AIRTABLE_TABLE_NAME = "predictions"  # 任意のテーブル名に変更可
+AIRTABLE_TABLE_NAME = "predictions"
 
 AIRTABLE_URL = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
 
