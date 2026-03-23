@@ -2,93 +2,160 @@ from datetime import date
 
 from .scoring import (
     calc_scores,
-    get_teppan_threshold,
-    get_buy_threshold,
     pair_score,
     select_best_hole_pattern
 )
 
+# ===== 競艇場補正 =====
+PLACE_CONFIG = {
+    "大村":  {"teppan": -5, "buy": -3, "ana": -10},
+    "下関":  {"teppan": 0,  "buy": 0,  "ana": 0},
+    "徳山":  {"teppan": +3, "buy": +2, "ana": +5},
+    "芦屋":  {"teppan": +2, "buy": +2, "ana": +5},
+    "唐津":  {"teppan": +4, "buy": +3, "ana": +7},
+    "平和島": {"teppan": +6, "buy": +4, "ana": +10},
+    "江戸川": {"teppan": +8, "buy": +5, "ana": +15},
+}
+
+BASE_TEPPAN_TH = 75
+BASE_BUY_TH = 65
+
+# ===== 擬似オッズ（超重要） =====
+def pseudo_odds_by_rank(rank):
+    table = {
+        1: 1.8,
+        2: 2.5,
+        3: 4.0,
+        4: 8.0,
+        5: 15.0,
+        6: 30.0
+    }
+    return table.get(rank, 10.0)
+
+
+def score_to_prob(score):
+    """スコア → 的中率（簡易変換）"""
+    return min(max(score / 100, 0.05), 0.9)
+
+
+def calc_ev(score, rank):
+    prob = score_to_prob(score)
+    odds = pseudo_odds_by_rank(rank)
+    return prob * odds
+
+
+def apply_pair_adjust(base_score, pair_score_val):
+    return base_score * (1 + (pair_score_val - 50) / 200)
+
+
+def get_thresholds(race):
+    cfg = PLACE_CONFIG.get(race.place, {"teppan": 0, "buy": 0, "ana": 0})
+
+    teppan_th = BASE_TEPPAN_TH + cfg["teppan"]
+    buy_th = BASE_BUY_TH + cfg["buy"]
+    ana_th = 70 + cfg["ana"]
+
+    if race.trend == "荒れ":
+        teppan_th += 5
+        buy_th += 3
+    elif race.trend == "安定":
+        teppan_th -= 3
+
+    return teppan_th, buy_th, ana_th
+
 
 def predict(race):
-    # スコア計算
     scores = calc_scores(race)
     sorted_boats = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
-    b1_num, s1 = sorted_boats[0]
-    b2_num, s2 = sorted_boats[1]
-    b3_num, s3 = sorted_boats[2]
+    # 順位マップ
+    rank_map = {boat: i+1 for i, (boat, _) in enumerate(sorted_boats)}
+
+    top = sorted_boats[:4]
+    b1, s1 = top[0]
+    b2, s2 = top[1]
+    b3, s3 = top[2]
+    b4, s4 = top[3]
 
     boat_dict = {b.number: b for b in race.boats}
-    B1 = boat_dict[b1_num]
-    B2 = boat_dict[b2_num]
-    B3 = boat_dict[b3_num]
+    B1, B2, B3 = boat_dict[b1], boat_dict[b2], boat_dict[b3]
 
-    pick1 = f"{b1_num}-{b2_num}-{b3_num}"
-    pick2 = f"{b2_num}-{b1_num}-{b3_num}"
+    # ===== 相性補正 =====
+    s1 = apply_pair_adjust(s1, pair_score(B1, B2))
+    s2 = apply_pair_adjust(s2, pair_score(B2, B3))
 
-    teppan_th = get_teppan_threshold(race.place)
-    buy_th = get_buy_threshold(race.place)
+    teppan_th, buy_th, ana_th = get_thresholds(race)
 
-    # 相性補正
-    ps_12 = pair_score(B1, B2)
-    if ps_12 >= 60:
-        s1 += 5
-    elif ps_12 <= 30:
-        s1 -= 5
+    # ===== 本線（EV軽チェック） =====
+    teppan = None
+    ev1 = calc_ev(s1, rank_map[b1])
 
-    ps_23 = pair_score(B2, B3)
-    if ps_23 >= 60:
-        s2 += 5
-    elif ps_23 <= 30:
-        s2 -= 5
+    if s1 >= teppan_th and ev1 >= 0.9:
+        teppan = f"{b1}-{b2}-{b3}"
 
-    label1 = "鉄板" if s1 >= teppan_th else "スルー"
-    label2 = "買い" if s2 >= buy_th else "スルー"
+    # ===== 対抗 =====
+    kai = None
+    ev2 = calc_ev(s2, rank_map[b2])
 
-    # 穴判定
+    if s2 >= buy_th and ev2 >= 1.0:
+        kai = f"{b1}-{b3}-{b2}"
+
+    # ===== 穴（EV重視） =====
     hole = None
-    hole_score = scores.get(5, 0)
-    B5 = boat_dict.get(5)
+    best_ev = 0
 
-    if B5:
-        if race.is_4kado_attack:
-            hole_score += 20
+    for num in [4, 5, 6]:
+        B = boat_dict.get(num)
+        if not B:
+            continue
+
+        h_score = scores.get(num, 0)
+
+        # 展開加点
+        if num == 4 and race.is_4kado_attack:
+            h_score += 20
         if race.wind_dir == "向かい風":
-            hole_score += 10
+            h_score += 10
         if race.water_condition == "荒れ":
-            hole_score += 10
-        if B5.motor_score >= 70:
-            hole_score += 10
+            h_score += 10
         if race.trend == "まくりデー":
-            hole_score += 15
+            h_score += 15
 
-        ps_51 = pair_score(B5, B1)
-        ps_52 = pair_score(B5, B2)
+        if B.motor_score >= 70:
+            h_score += 10
 
-        if ps_51 >= 60 or ps_52 >= 60:
-            hole_score += 10
-        elif ps_51 <= 30:
-            hole_score -= 10
+        ps1 = pair_score(B, B1)
+        ps2 = pair_score(B, B2)
 
-        if hole_score >= 70:
-            hole = select_best_hole_pattern(b1_num, b2_num, b3_num, scores)
+        if ps1 >= 60 or ps2 >= 60:
+            h_score += 10
+        elif ps1 <= 30:
+            h_score -= 10
 
-    teppan_out = pick1 if label1 == "鉄板" else None
-    kai_out = pick2 if label2 == "買い" else None
+        # 重み
+        if num == 4:
+            h_score *= 1.1
+        elif num == 5:
+            h_score *= 1.2
+        elif num == 6:
+            h_score *= 0.9
 
-    suru_list = []
-    if label1 == "スルー":
-        suru_list.append(pick1)
-    if label2 == "スルー":
-        suru_list.append(pick2)
-    suru_out = suru_list if suru_list else None
+        ev = calc_ev(h_score, rank_map.get(num, 6))
+
+        if ev > best_ev and ev >= 1.2:
+            best_ev = ev
+            hole = select_best_hole_pattern(b1, b2, b3, scores)
+
+    # ===== 最終2点 =====
+    final_main = teppan or kai
+    final_ana = hole
 
     return {
-        "teppan": teppan_out,
-        "kai": kai_out,
-        "suru": suru_out,
-        "ana": hole,
-        "scores": scores,  # ★ スコアを後で詳細表示・学習用に保持
+        "main": final_main,
+        "ana": final_ana,
+        "scores": scores,
+        "ev_main": ev1 if final_main else None,
+        "ev_ana": best_ev if final_ana else None
     }
 
 
@@ -98,18 +165,19 @@ def predict_all(races):
 
     for race in races:
         pred = predict(race)
+
         race_output = {
             "race_name": race.place,
             "race_number": race.number,
-            "teppan": pred["teppan"],
-            "kai": pred["kai"],
-            "suru": pred["suru"],
+            "main": pred["main"],
             "ana": pred["ana"],
-            "scores": pred["scores"],  # ★ 各レースのスコアも保持
+            "ev_main": pred["ev_main"],
+            "ev_ana": pred["ev_ana"],
         }
+
         results.append(race_output)
 
-        if pred["teppan"] or pred["kai"] or pred["ana"]:
+        if pred["main"] or pred["ana"]:
             summary.append(race_output)
 
     summary = sorted(summary, key=lambda x: x["race_number"])
@@ -117,93 +185,19 @@ def predict_all(races):
 
 
 def format_summary(summary):
-    if len(summary) == 0:
+    if not summary:
         return "【本日買うべきレースはありません】"
 
-    lines = ["【本日買うべきレース一覧】\n"]
+    lines = ["【本日狙いレース（期待値フィルター済）】\n"]
+
     for r in summary:
         lines.append(f"{r['race_name']} {r['race_number']}R")
-        if r["teppan"]:
-            lines.append(f"鉄板：{r['teppan']}")
-        if r["kai"]:
-            lines.append(f"買い：{r['kai']}")
+
+        if r["main"]:
+            lines.append(f"本線：{r['main']} (EV:{round(r['ev_main'],2)})")
         if r["ana"]:
-            lines.append(f"穴：{r['ana']}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def format_full_output(results, summary):
-    lines = ["【全レース詳細】\n"]
-
-    for r in results:
-        lines.append(f"{r['race_name']} {r['race_number']}R")
-
-        if r["teppan"]:
-            lines.append(f"鉄板：{r['teppan']}")
-        if r["kai"]:
-            lines.append(f"買い：{r['kai']}")
-        if r["suru"]:
-            lines.append(f"スルー：{', '.join(r['suru'])}")
-        if r["ana"]:
-            lines.append(f"穴：{r['ana']}")
+            lines.append(f"穴：{r['ana']} (EV:{round(r['ev_ana'],2)})")
 
         lines.append("")
-
-    # 最後に買うべきレース一覧
-    lines.append("【買うべきレース一覧】\n")
-    if len(summary) == 0:
-        lines.append("本日買うべきレースはありません")
-    else:
-        for r in summary:
-            lines.append(f"{r['race_name']} {r['race_number']}R")
-            if r["teppan"]:
-                lines.append(f"鉄板：{r['teppan']}")
-            if r["kai"]:
-                lines.append(f"買い：{r['kai']}")
-            if r["ana"]:
-                lines.append(f"穴：{r['ana']}")
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-def format_detailed_output(race, pred, scores):
-    """1レース分を、あなたの理想フォーマットで整形する関数"""
-    today = date.today().strftime("%Y/%m/%d")
-
-    # スコア順位（上位3艇）
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    b1, s1 = sorted_scores[0]
-    b2, s2 = sorted_scores[1]
-    b3, s3 = sorted_scores[2]
-
-    rank1 = f"{b1}号艇（{s1}）"
-    rank2 = f"{b2}号艇（{s2}）"
-    rank3 = f"{b3}号艇（{s3}）"
-
-    lines = []
-
-    lines.append(f"📅 {today}")
-    lines.append(f"🏁【{race.place}{race.number}R】\n")
-
-    # 気象（1日固定想定）
-    lines.append("【気象（1日固定）】")
-    lines.append(f"天気：{race.weather}")
-    lines.append(f"風向：{race.wind_dir}")
-    lines.append(f"風速：{race.wind_power}m/s\n")
-
-    # スコア順位
-    lines.append("【スコア順位】")
-    lines.append(f"1位：{rank1}")
-    lines.append(f"2位：{rank2}")
-    lines.append(f"3位：{rank3}\n")
-
-    # 買い目
-    lines.append("【買い目】")
-    lines.append(f"鉄板：{pred['teppan'] or 'なし'}")
-    lines.append(f"買い：{pred['kai'] or 'なし'}")
-    lines.append(f"スルー：{', '.join(pred['suru']) if pred['suru'] else 'なし'}")
-    lines.append(f"穴：{pred['ana'] or 'なし'}")
 
     return "\n".join(lines)
