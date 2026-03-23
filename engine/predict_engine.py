@@ -1,184 +1,180 @@
-from datetime import date
+import json
+import math
+from engine.scoring import score_boat
 
-from .scoring import (
-    calc_scores,
-    pair_score,
-    select_best_hole_pattern
-)
+# ===== パラメータ読み込み =====
+with open("params.json", "r", encoding="utf-8") as f:
+    PARAMS = json.load(f)
 
-# ===== 競艇場補正 =====
-PLACE_CONFIG = {
-    "大村":  {"teppan": -5, "buy": -3, "ana": -10},
-    "下関":  {"teppan": 0,  "buy": 0,  "ana": 0},
-    "徳山":  {"teppan": +3, "buy": +2, "ana": +5},
-    "芦屋":  {"teppan": +2, "buy": +2, "ana": +5},
-    "唐津":  {"teppan": +4, "buy": +3, "ana": +7},
-    "平和島": {"teppan": +6, "buy": +4, "ana": +10},
-    "江戸川": {"teppan": +8, "buy": +5, "ana": +15},
-}
+PLACE_ADJ = PARAMS["place_adj"]
+HOLE_ADJ = PARAMS["hole_adj"]
+OUTER_MUL = {int(k): v for k, v in PARAMS["outer_multiplier"].items()}
 
-BASE_TEPPAN_TH = 75
-BASE_BUY_TH = 65
+MAIN_TH_BASE = PARAMS["main_th_base"]
+ANA_TH_BASE  = PARAMS["ana_th_base"]
 
-# ===== 擬似オッズ（超重要） =====
-def pseudo_odds_by_rank(rank):
-    table = {
-        1: 1.8,
-        2: 2.5,
-        3: 4.0,
-        4: 8.0,
-        5: 15.0,
-        6: 30.0
+ODDS_BY_RANK = {1: 1.8, 2: 2.5, 3: 4.0, 4: 8.0, 5: 15.0, 6: 30.0}
+
+
+# ===== Softmax（安全版）=====
+def softmax(scores: dict[int, float], temperature: float = 15.0) -> dict[int, float]:
+    max_v = max(scores.values())
+    exps = {k: math.exp((v - max_v) / temperature) for k, v in scores.items()}
+    total = sum(exps.values())
+    if total <= 0:
+        n = len(scores)
+        return {k: 1 / n for k in scores}
+    return {k: v / total for k, v in exps.items()}
+
+
+# ===== 単艇EV =====
+def single_ev(prob: float, rank: int) -> float:
+    return prob * ODDS_BY_RANK.get(rank, 10.0)
+
+
+# ===== 3連単EV（条件付き確率）=====
+def trifecta_ev(pattern: tuple[int, int, int],
+                probs: dict[int, float],
+                trifecta_odds: float) -> float:
+    b1, b2, b3 = pattern
+
+    p1 = probs[b1]
+
+    rem1 = {k: v for k, v in probs.items() if k != b1}
+    s1 = sum(rem1.values())
+    if s1 <= 0:
+        return 0.0
+    p2 = rem1[b2] / s1
+
+    rem2 = {k: v for k, v in rem1.items() if k != b2}
+    s2 = sum(rem2.values())
+    if s2 <= 0:
+        return 0.0
+    p3 = rem2[b3] / s2
+
+    return p1 * p2 * p3 * trifecta_odds
+
+
+# ===== 3連単オッズ推定（弱め）=====
+def estimate_trifecta_odds(pattern: tuple[int, int, int],
+                           rank_map: dict[int, int]) -> float:
+    o1 = ODDS_BY_RANK.get(rank_map.get(pattern[0], 6), 30.0)
+    o2 = ODDS_BY_RANK.get(rank_map.get(pattern[1], 6), 30.0)
+    o3 = ODDS_BY_RANK.get(rank_map.get(pattern[2], 6), 30.0)
+    return o1 * o2 * o3 * 0.15
+
+
+def predict(race) -> dict:
+    """
+    回収率重視＋本線的中率を少し底上げした2点最適化モデル（完全版）
+    """
+
+    # ===== スコア =====
+    scores: dict[int, float] = {
+        i: score_boat(race.place, race.number, i) for i in range(1, 7)
     }
-    return table.get(rank, 10.0)
+    probs = softmax(scores)
 
-
-def score_to_prob(score):
-    """スコア → 的中率（簡易変換）"""
-    return min(max(score / 100, 0.05), 0.9)
-
-
-def calc_ev(score, rank):
-    prob = score_to_prob(score)
-    odds = pseudo_odds_by_rank(rank)
-    return prob * odds
-
-
-def apply_pair_adjust(base_score, pair_score_val):
-    return base_score * (1 + (pair_score_val - 50) / 200)
-
-
-def get_thresholds(race):
-    cfg = PLACE_CONFIG.get(race.place, {"teppan": 0, "buy": 0, "ana": 0})
-
-    teppan_th = BASE_TEPPAN_TH + cfg["teppan"]
-    buy_th = BASE_BUY_TH + cfg["buy"]
-    ana_th = 70 + cfg["ana"]
-
-    if race.trend == "荒れ":
-        teppan_th += 5
-        buy_th += 3
-    elif race.trend == "安定":
-        teppan_th -= 3
-
-    return teppan_th, buy_th, ana_th
-
-
-def predict(race):
-    scores = calc_scores(race)
     sorted_boats = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    b1, b2, b3 = [x[0] for x in sorted_boats[:3]]
+    s1, s2, s3 = scores[b1], scores[b2], scores[b3]
+    rank_map: dict[int, int] = {boat: i + 1 for i, (boat, _) in enumerate(sorted_boats)}
 
-    # 順位マップ
-    rank_map = {boat: i+1 for i, (boat, _) in enumerate(sorted_boats)}
+    # ===== 場補正 =====
+    cfg = PLACE_ADJ.get(race.place, {"main_adj": 0, "ana_adj": 0})
+    main_adj: int = cfg["main_adj"]
+    ana_adj: int = cfg["ana_adj"]
 
-    top = sorted_boats[:4]
-    b1, s1 = top[0]
+    wind = getattr(race, "wind_dir", "")
+    water = getattr(race, "water_condition", "")
+    trend = getattr(race, "trend", "")
+    boats = getattr(race, "boats", [])
+
+    # ===== 本線 =====
+    main = None
+    ev_main = 0.0
+
+    main_th = MAIN_TH_BASE + main_adj
+    if wind == "追い風":
+        main_th -= 3
+    if water == "安定":
+        main_th -= 2
+
+    # ★ 本線の当たりやすさを少し強化
+    if s1 >= (main_th - 2) and (s1 - s2) >= 4:
+        p = (b1, b2, b3)
+        ev = trifecta_ev(p, probs, estimate_trifecta_odds(p, rank_map))
+        if ev >= 0.02:
+            main = f"{b1}-{b2}-{b3}"
+            ev_main = ev
 
     # ===== 対抗 =====
-    kai = None
-    ev2 = calc_ev(s2, rank_map[b2])
+    alt = None
+    if main is None and (s2 - s3) >= 5:
+        p = (b1, b3, b2)
+        ev = trifecta_ev(p, probs, estimate_trifecta_odds(p, rank_map))
+        if ev >= 0.02:
+            alt = f"{b1}-{b3}-{b2}"
+            ev_main = ev
 
-    if s2 >= buy_th and ev2 >= 1.0:
-        kai = f"{b1}-{b3}-{b2}"
-
-    # ===== 穴（EV重視） =====
-    hole = None
-    best_ev = 0
+    # ===== 穴補正後の再Softmax =====
+    hole_scores: dict[int, float] = dict(scores)
 
     for num in [4, 5, 6]:
-        B = boat_dict.get(num)
-        if not B:
-            continue
+        h = scores[num]
 
-        h_score = scores.get(num, 0)
+        if num == 4 and getattr(race, "is_4kado_attack", False):
+            h += HOLE_ADJ["base"]
+        if wind == "向かい風":
+            h += HOLE_ADJ["wind"]
+        if water == "荒れ":
+            h += HOLE_ADJ["water"]
+        if trend == "まくりデー":
+            h += HOLE_ADJ["trend"]
 
-        # 展開加点
-        if num == 4 and race.is_4kado_attack:
-            h_score += 20
-        if race.wind_dir == "向かい風":
-            h_score += 10
-        if race.water_condition == "荒れ":
-            h_score += 10
-        if race.trend == "まくりデー":
-            h_score += 15
+        boat_obj = next((b for b in boats if getattr(b, "number", None) == num), None)
+        if boat_obj and getattr(boat_obj, "motor_score", 0) >= 70:
+            h += HOLE_ADJ["motor"]
 
-        if B.motor_score >= 70:
-            h_score += 10
+        h *= OUTER_MUL.get(num, 1.0)
+        hole_scores[num] = h
 
-        ps1 = pair_score(B, B1)
-        ps2 = pair_score(B, B2)
+    hole_probs = softmax(hole_scores)
+    hole_sorted = sorted(hole_scores.items(), key=lambda x: x[1], reverse=True)
+    hole_rank_map: dict[int, int] = {boat: i + 1 for i, (boat, _) in enumerate(hole_sorted)}
 
-        if ps1 >= 60 or ps2 >= 60:
-            h_score += 10
-        elif ps1 <= 30:
-            h_score -= 10
+    # ===== 穴艇選定 =====
+    hole = None
+    best_ev = 0.0
+    ana_th = ANA_TH_BASE + (ana_adj / 20)
 
-        # 重み
-        if num == 4:
-            h_score *= 1.1
-        elif num == 5:
-            h_score *= 1.2
-        elif num == 6:
-            h_score *= 0.9
-
-        ev = calc_ev(h_score, rank_map.get(num, 6))
-
-        if ev > best_ev and ev >= 1.2:
+    for num in [4, 5, 6]:
+        ev = single_ev(hole_probs[num], hole_rank_map[num])
+        if ev >= ana_th and ev > best_ev:
             best_ev = ev
-            hole = select_best_hole_pattern(b1, b2, b3, scores)
+            hole = num
 
-    # ===== 最終2点 =====
-    final_main = teppan or kai
-    final_ana = hole
+    # ===== 穴買い目（3パターン比較）=====
+    ana = None
+    ev_ana = 0.0
+
+    if hole is not None:
+        patterns = [
+            (b1, b2, hole),
+            (b1, hole, b2),
+            (b2, b1, hole),
+        ]
+        for p in patterns:
+            ev = trifecta_ev(p, hole_probs, estimate_trifecta_odds(p, hole_rank_map))
+            if ev > ev_ana:
+                ev_ana = ev
+                ana = f"{p[0]}-{p[1]}-{p[2]}"
 
     return {
-        "main": final_main,
-        "ana": final_ana,
+        "main": main or alt,
+        "ana": ana,
+        "ev_main": round(ev_main, 4) if (main or alt) else None,
+        "ev_ana": round(ev_ana, 4) if ana else None,
         "scores": scores,
-        "ev_main": ev1 if final_main else None,
-        "ev_ana": best_ev if final_ana else None
+        "probs": {k: round(v, 4) for k, v in hole_probs.items()},
     }
-
-
-def predict_all(races):
-    results = []
-    summary = []
-
-    for race in races:
-        pred = predict(race)
-
-        race_output = {
-            "race_name": race.place,
-            "race_number": race.number,
-            "main": pred["main"],
-            "ana": pred["ana"],
-            "ev_main": pred["ev_main"],
-            "ev_ana": pred["ev_ana"],
-        }
-
-        results.append(race_output)
-
-        if pred["main"] or pred["ana"]:
-            summary.append(race_output)
-
-    summary = sorted(summary, key=lambda x: x["race_number"])
-    return results, summary
-
-
-def format_summary(summary):
-    if not summary:
-        return "【本日買うべきレースはありません】"
-
-    lines = ["【本日狙いレース（期待値フィルター済）】\n"]
-
-    for r in summary:
-        lines.append(f"{r['race_name']} {r['race_number']}R")
-
-        if r["main"]:
-            lines.append(f"本線：{r['main']} (EV:{round(r['ev_main'],2)})")
-        if r["ana"]:
-            lines.append(f"穴：{r['ana']} (EV:{round(r['ev_ana'],2)})")
-
-        lines.append("")
-
-    return "\n".join(lines)
