@@ -1,5 +1,4 @@
 import requests
-import json
 
 # ===== Airtable 設定 =====
 AIRTABLE_API_KEY = "YOUR_API_KEY"
@@ -16,8 +15,7 @@ HEADERS = {
 
 def save_to_airtable(record):
     """
-    Airtable に1件のレコードを保存する
-    record: airtable_formatter.format_for_airtable() の返り値
+    Airtable に1件保存
     """
 
     payload = {
@@ -27,13 +25,17 @@ def save_to_airtable(record):
     }
 
     try:
-        response = requests.post(AIRTABLE_URL, headers=HEADERS, data=json.dumps(payload))
+        response = requests.post(
+            AIRTABLE_URL,
+            headers=HEADERS,
+            json=payload  # ←重要（json指定）
+        )
 
         if response.status_code in (200, 201):
             return {
                 "success": True,
                 "status": response.status_code,
-                "response": response.json()
+                "id": response.json().get("records", [{}])[0].get("id")
             }
         else:
             return {
@@ -47,3 +49,38 @@ def save_to_airtable(record):
             "success": False,
             "error": str(e)
         }
+
+
+def save_batch_to_airtable(records):
+    """
+    複数レコード一括保存（最大10件/回）
+    """
+
+    results = []
+
+    for i in range(0, len(records), 10):
+        chunk = records[i:i + 10]
+
+        payload = {
+            "records": [{"fields": r} for r in chunk]
+        }
+
+        try:
+            response = requests.post(
+                AIRTABLE_URL,
+                headers=HEADERS,
+                json=payload
+            )
+
+            results.append({
+                "status": response.status_code,
+                "success": response.status_code in (200, 201)
+            })
+
+        except Exception as e:
+            results.append({
+                "success": False,
+                "error": str(e)
+            })
+
+    return results
