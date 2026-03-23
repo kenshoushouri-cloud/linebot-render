@@ -66,7 +66,7 @@ def estimate_trifecta_odds(pattern: tuple[int, int, int],
 
 def predict(race) -> dict:
     """
-    回収率重視＋本線的中率を少し底上げした2点最適化モデル（完全版）
+    回収率重視＋本線的中率を底上げした2点最適化モデル（完全版）
     """
 
     # ===== スコア =====
@@ -100,7 +100,7 @@ def predict(race) -> dict:
     if water == "安定":
         main_th -= 2
 
-    # ★ 本線の当たりやすさを少し強化
+    # ★ 本線の当たりやすさを強化（あなたの希望に合わせて調整済み）
     if s1 >= (main_th - 2) and (s1 - s2) >= 4:
         p = (b1, b2, b3)
         ev = trifecta_ev(p, probs, estimate_trifecta_odds(p, rank_map))
