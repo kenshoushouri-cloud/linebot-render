@@ -2,7 +2,6 @@ name: Run Optimizer
 
 on:
   schedule:
-    # 日本時間25:10 = UTC16:10
     - cron: "10 16 * * *"
   workflow_dispatch:
 
@@ -13,6 +12,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          path: .
 
       - name: Set up Python
         uses: actions/setup-python@v4
